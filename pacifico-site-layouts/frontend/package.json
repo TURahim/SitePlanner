@@ -10,11 +10,19 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@aws-amplify/auth": "^6.17.0",
+    "@aws-amplify/core": "^6.14.0",
+    "@types/leaflet": "^1.9.21",
+    "axios": "^1.13.2",
+    "leaflet": "^1.9.4",
     "react": "^19.2.0",
-    "react-dom": "^19.2.0"
+    "react-dom": "^19.2.0",
+    "react-leaflet": "^5.0.0",
+    "react-router-dom": "^7.9.6"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
+    "@types/geojson": "^7946.0.16",
     "@types/node": "^24.10.1",
     "@types/react": "^19.2.5",
     "@types/react-dom": "^19.2.3",

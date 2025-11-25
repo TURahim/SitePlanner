@@ -1,0 +1,121 @@
+/* Layout Component Styles */
+
+.app-layout {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-header {
+  background: var(--surface-elevated);
+  border-bottom: 1px solid var(--border-subtle);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  backdrop-filter: blur(8px);
+}
+
+.header-content {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 0 1.5rem;
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.logo-link {
+  text-decoration: none;
+}
+
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+}
+
+.logo-icon {
+  width: 28px;
+  height: 28px;
+  color: var(--accent-primary);
+}
+
+.logo-text {
+  font-family: var(--font-display);
+  font-size: 1.375rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: -0.02em;
+}
+
+.nav-links {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+}
+
+.nav-link {
+  color: var(--text-secondary);
+  text-decoration: none;
+  font-weight: 500;
+  font-size: 0.9375rem;
+  transition: color 0.15s ease;
+}
+
+.nav-link:hover {
+  color: var(--text-primary);
+}
+
+.user-menu {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.user-email {
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+}
+
+.btn-logout {
+  background: transparent;
+  border: 1px solid var(--border-default);
+  color: var(--text-secondary);
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-logout:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+  border-color: var(--border-hover);
+}
+
+.btn-primary {
+  background: var(--accent-primary);
+  color: var(--accent-text);
+  padding: 0.5rem 1.25rem;
+  border-radius: 6px;
+  font-weight: 500;
+  font-size: 0.9375rem;
+  text-decoration: none;
+  transition: all 0.15s ease;
+  border: none;
+  cursor: pointer;
+}
+
+.btn-primary:hover {
+  background: var(--accent-hover);
+  transform: translateY(-1px);
+}
+
+.app-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+

@@ -146,10 +146,40 @@ async def root() -> dict[str, str]:
 
 
 # =============================================================================
-# API Routes (will be added in subsequent tasks)
+# API Routes
 # =============================================================================
 
-# TODO (A-05): Add POST /api/sites/upload
-# TODO (A-06): Add GET /api/sites/{id}
-# TODO (A-07): Add POST /api/layouts/generate
-# TODO (A-08): Add authentication middleware
+from app.api.auth import get_current_user
+from app.api.layouts import router as layouts_router
+from app.api.sites import router as sites_router
+from app.models.user import User
+from fastapi import Depends
+
+# Include API routers
+app.include_router(sites_router)
+app.include_router(layouts_router)
+
+
+@app.get("/api/me", tags=["Auth"])
+async def get_me(user: User = Depends(get_current_user)) -> dict:
+    """
+    Get the current authenticated user's information.
+    
+    This is a protected endpoint that requires a valid JWT token.
+    """
+    return {
+        "id": str(user.id),
+        "email": user.email,
+        "name": user.name,
+    }
+
+
+# API endpoints implemented:
+# - POST /api/sites/upload (A-05)
+# - GET /api/sites/{id} (A-06)
+# - GET /api/sites (list)
+# - DELETE /api/sites/{id}
+# - POST /api/layouts/generate (A-07)
+# - GET /api/layouts/{id}
+# - GET /api/layouts (list)
+# - DELETE /api/layouts/{id}

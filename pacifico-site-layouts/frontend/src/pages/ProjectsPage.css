@@ -1,0 +1,317 @@
+/* Projects Page Styles */
+
+.projects-page {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 2rem 1.5rem;
+}
+
+.projects-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 2rem;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.projects-header h1 {
+  font-family: var(--font-display);
+  font-size: 1.75rem;
+  font-weight: 600;
+  margin: 0 0 0.25rem;
+  color: var(--text-primary);
+}
+
+.projects-header p {
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.btn-new-project {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: var(--accent-primary);
+  color: var(--accent-text);
+  padding: 0.75rem 1.25rem;
+  border: none;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 0.9375rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-new-project svg {
+  width: 18px;
+  height: 18px;
+}
+
+.btn-new-project:hover {
+  background: var(--accent-hover);
+  transform: translateY(-1px);
+}
+
+/* Empty State */
+.empty-state {
+  text-align: center;
+  padding: 4rem 2rem;
+  background: var(--surface-elevated);
+  border: 1px dashed var(--border-default);
+  border-radius: 12px;
+}
+
+.empty-icon {
+  width: 64px;
+  height: 64px;
+  margin: 0 auto 1.5rem;
+  color: var(--text-muted);
+}
+
+.empty-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.empty-state h2 {
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  margin: 0 0 0.5rem;
+  color: var(--text-primary);
+}
+
+.empty-state p {
+  color: var(--text-secondary);
+  margin: 0 0 1.5rem;
+}
+
+.empty-state .btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: var(--accent-primary);
+  color: var(--accent-text);
+  padding: 0.75rem 1.5rem;
+  border: none;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 0.9375rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+/* Projects Grid */
+.projects-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 1.5rem;
+}
+
+.project-card {
+  background: var(--surface-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  overflow: hidden;
+  text-decoration: none;
+  transition: all 0.25s ease;
+}
+
+.project-card:hover {
+  border-color: var(--border-hover);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+}
+
+.project-preview {
+  height: 140px;
+  background: var(--surface-base);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+}
+
+.project-preview svg {
+  width: 48px;
+  height: 48px;
+}
+
+.project-info {
+  padding: 1rem 1.25rem;
+}
+
+.project-info h3 {
+  font-family: var(--font-display);
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0 0 0.25rem;
+  color: var(--text-primary);
+}
+
+.project-info p {
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+/* Add Card */
+.add-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+  cursor: pointer;
+  border-style: dashed;
+}
+
+.add-card:hover {
+  border-color: var(--accent-primary);
+}
+
+.add-icon {
+  width: 48px;
+  height: 48px;
+  margin-bottom: 0.75rem;
+  color: var(--text-muted);
+  transition: color 0.2s ease;
+}
+
+.add-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.add-card:hover .add-icon {
+  color: var(--accent-primary);
+}
+
+.add-card span {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+/* Modal */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  z-index: 1000;
+  animation: fadeIn 0.2s ease;
+}
+
+.modal {
+  background: var(--surface-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: 16px;
+  width: 100%;
+  max-width: 480px;
+  overflow: hidden;
+  animation: slideUp 0.3s ease;
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1.25rem 1.5rem;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.modal-header h2 {
+  font-family: var(--font-display);
+  font-size: 1.125rem;
+  font-weight: 600;
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.modal-close {
+  width: 32px;
+  height: 32px;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.modal-close:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.modal-close svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* Upload Zone */
+.upload-zone {
+  position: relative;
+  padding: 3rem 2rem;
+  text-align: center;
+  border: 2px dashed var(--border-default);
+  border-radius: 12px;
+  margin: 1.5rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.upload-zone:hover {
+  border-color: var(--accent-primary);
+  background: rgba(16, 185, 129, 0.05);
+}
+
+.upload-zone input[type="file"] {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.upload-icon {
+  width: 48px;
+  height: 48px;
+  margin: 0 auto 1rem;
+  color: var(--accent-primary);
+}
+
+.upload-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.upload-text {
+  font-size: 1rem;
+  color: var(--text-primary);
+  margin: 0 0 0.5rem;
+}
+
+.upload-hint {
+  font-size: 0.875rem;
+  color: var(--text-muted);
+  margin: 0;
+}
+

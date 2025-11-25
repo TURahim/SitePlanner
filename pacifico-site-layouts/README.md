@@ -71,8 +71,33 @@ uvicorn app.main:app --reload
 
 ```bash
 cd frontend
+
+# Install dependencies
 npm install
+
+# Configure environment variables
+cp .env.example .env
+# Edit .env and add your Cognito credentials from terraform outputs
+
+# Start development server
 npm run dev
+# Open http://localhost:5173
+```
+
+**Frontend Environment Variables** (from Terraform outputs):
+
+```bash
+VITE_API_URL=http://localhost:8000  # or ALB DNS name for cloud testing
+VITE_COGNITO_USER_POOL_ID=<from terraform output cognito_user_pool_id>
+VITE_COGNITO_CLIENT_ID=<from terraform output cognito_client_id>
+VITE_AWS_REGION=us-east-1
+```
+
+Get these values:
+```bash
+cd pacifico-site-layouts/infra/terraform
+terraform output cognito_user_pool_id
+terraform output cognito_client_id
 ```
 
 ### Deploy to AWS
@@ -141,7 +166,12 @@ curl http://$ALB_DNS/health
 | Backend Service (A-02) | ✅ Deployed | ECS Fargate, ALB, ECR |
 | CI/CD Pipeline (A-03) | ✅ Ready | GitHub Actions workflows (see `.github/README.md`) |
 | Backend API Models (A-04) | ✅ Ready | FastAPI + SQLAlchemy + PostGIS |
-| Frontend Setup (A-09) | ⏳ Next | React + TypeScript + Vite |
+| Backend Auth (A-08) | ✅ Ready | Cognito JWT validation, user auto-creation |
+| Site Management (A-05, A-06) | ✅ Ready | KML/KMZ upload, site retrieval with GeoJSON |
+| Layout Generation (A-07) | ✅ Ready | Dummy asset placement, road generation |
+| Frontend Setup (A-09) | ✅ Ready | React + TypeScript + Vite + routing |
+| Frontend Pages (A-09) | ✅ Ready | Landing, Auth, Dashboard, Site Detail |
+| Frontend Integration | ⏳ Next | Connect pages to API (A-10, A-11, A-12, A-13) |
 
 ## Deployment Troubleshooting
 
@@ -192,10 +222,46 @@ aws ecs describe-tasks --cluster pacifico-layouts-dev-cluster --tasks $TASK_ID -
 The application follows a three-phase MVP approach:
 
 1. **Phase A** — Thin vertical slice: Upload → dummy asset placement → map display
+   - Infrastructure: ✅ Complete (A-01, A-02, A-03)
+   - Backend foundation: ✅ Complete (A-04, A-08)
+   - Backend API: ✅ Complete (A-05, A-06, A-07)
+   - Frontend foundation: ✅ Complete (A-09)
+   - Frontend integration: 🔄 In Progress (A-10-A-15)
+
 2. **Phase B** — Real layout engine: Terrain-aware placement, routing, cut/fill
+   - DEM fetching & caching, slope computation, asset placement algorithm, road routing, cut/fill
+
 3. **Phase C** — Async processing + production hardening
+   - SQS worker for async layout generation, monitoring, documentation
 
 See `MVP_Task_List.md` in the project root for detailed task breakdown and progress tracking.
+
+## Current Progress
+
+**Completed (Backend: 9/15 tasks, 60%):**
+- ✅ A-01: Infrastructure foundation (VPC, RDS, S3, Cognito, ECR, ALB)
+- ✅ A-02: ECS backend deployment with health checks
+- ✅ A-03: GitHub Actions CI/CD pipeline
+- ✅ A-04: FastAPI app with SQLAlchemy models and PostGIS
+- ✅ A-05: KML/KMZ upload endpoint (fastkml + S3)
+- ✅ A-06: Site retrieval with GeoJSON boundary
+- ✅ A-07: Dummy layout generation (grid-based placement)
+- ✅ A-08: Cognito JWT authentication with auto-user-creation
+- ✅ A-09: React frontend with routing, auth context, and UI scaffolding
+
+**Backend API Summary:**
+- **Sites API**: POST/GET /api/sites, GET /api/sites/{id}, DELETE /api/sites/{id}
+- **Layouts API**: POST/GET /api/layouts, GET /api/layouts/{id}, DELETE /api/layouts/{id}
+- **Auth API**: POST /api/me (get current user)
+- **Health**: GET /health, GET /health/ready
+
+**Next Steps (Frontend Integration):**
+1. **A-10** - Connect frontend auth UI to Cognito
+2. **A-11** - Projects/sites management UI (list, delete)
+3. **A-12** - KML upload component (drag-drop)
+4. **A-13** - Leaflet map integration (display site boundaries)
+5. **A-14** - Generate Layout button + results display
+6. **A-15** - Deploy frontend to S3 + CloudFront
 
 ## License
 

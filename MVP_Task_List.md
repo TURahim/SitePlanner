@@ -2,7 +2,7 @@
 
 **Project:** Geospatial layout tool for DG/microgrid/data center sites  
 **Scope:** Three-phase MVP delivering cloud-deployed, multi-user, terrain-aware layout generation  
-**Last Updated:** November 25, 2025 (A-04 Complete ✅)
+**Last Updated:** November 25, 2025 (A-05, A-06, A-07 Complete ✅)
 
 ---
 
@@ -14,17 +14,17 @@
 | A-02 | ✅ Complete | Nov 24, 2025 |
 | A-03 | ✅ Complete | Nov 25, 2025 |
 | A-04 | ✅ Complete | Nov 25, 2025 |
-| A-05 | 🔲 Not Started | - |
-| A-06 | 🔲 Not Started | - |
-| A-07 | 🔲 Not Started | - |
-| A-08 | 🔲 Not Started | - |
-| A-09 | 🔲 Not Started | - |
-| A-10 | 🔲 Not Started | - |
-| A-11 | 🔲 Not Started | - |
-| A-12 | 🔲 Not Started | - |
-| A-13 | 🔲 Not Started | - |
-| A-14 | 🔲 Not Started | - |
-| A-15 | 🔲 Not Started | - |
+| A-05 | ✅ Complete | Nov 25, 2025 |
+| A-06 | ✅ Complete | Nov 25, 2025 |
+| A-07 | ✅ Complete | Nov 25, 2025 |
+| A-08 | ✅ Complete | Nov 25, 2025 |
+| A-09 | ✅ Complete | Nov 25, 2025 |
+| A-10 | 🔲 Ready | - |
+| A-11 | 🔲 Ready (after A-10) | - |
+| A-12 | 🔲 Ready (after A-11) | - |
+| A-13 | 🔲 Ready (after A-11) | - |
+| A-14 | 🔲 Ready (after A-13) | - |
+| A-15 | 🔲 Ready | - |
 
 ---
 
@@ -316,71 +316,228 @@ User ──┬── Project ── Site ── Layout ──┬── Asset
 
 ---
 
-### A-05: Implement POST /api/sites/upload endpoint
-**Owner:** BE  
-**Story Points:** 5  
-**Dependencies:** A-04
-
-Create endpoint to accept and process KML/KMZ files:
-- Accept multipart/form-data with file upload (max 10MB)
-- Validate file type (.kml, .kmz only)
-- Parse KML/KMZ using fastkml or simplekml library, extract first Polygon/MultiPolygon
-- Convert to GeoJSON format
-- Store original file in S3 (site-uploads bucket)
-- Insert Site record with boundary geometry in PostGIS
-- Calculate and store area_m2 using ST_Area
-- Return site_id and boundary GeoJSON
-
-**Acceptance Criteria:**
-- Valid KML uploads successfully, returns site_id
-- **Site record associated with current_user via owner_user_id (derived from Cognito JWT, never from client input)**
-- Boundary stored correctly in PostGIS (verify with ST_AsGeoJSON)
-- Original file in S3 at `uploads/{site_id}/original.{ext}`
-- Invalid files return 400 with clear error message
-- Files >10MB rejected with 413
-
----
-
-### A-06: Implement GET /api/sites/{id} endpoint
-**Owner:** BE  
-**Story Points:** 2  
-**Dependencies:** A-04
-
-Create endpoint to retrieve site details:
-- Query Site by ID **AND owner_user_id = current_user.id** (or via project_id membership)
-- Return site metadata (id, name, area_m2, created_at)
-- Return boundary as GeoJSON using ST_AsGeoJSON
-- **If no such site exists for this user, return 404 (do not leak existence of other users' site IDs)**
-
-**Acceptance Criteria:**
-- Returns site data with valid GeoJSON boundary for sites owned by current user
-- 404 for non-existent sites **or sites owned by other users** (indistinguishable responses)
-- Response time <500ms for typical site
-
----
-
-### A-07: Implement POST /api/layouts/generate with dummy placement
+### A-08: Implement Cognito JWT authentication middleware ✅ COMPLETE
 **Owner:** BE  
 **Story Points:** 3  
-**Dependencies:** A-04, A-06
+**Dependencies:** A-04  
+**Completed:** November 25, 2025
 
-Create endpoint that generates a dummy layout for a site:
-- Accept site_id and simple config (e.g., target_capacity_kw)
-- **Load Site by site_id scoped to current_user (owner_user_id check)**
-- **If site not owned by user or their project, return 404**
-- Create Layout record with status='completed'
-- Generate 5-10 dummy assets evenly spaced within site bbox using ST_MakeEnvelope and ST_GeneratePoints (or simple grid math)
-- Assign types randomly (solar, battery, generator) with placeholder capacities
-- Insert Asset records with POINT geometries
-- Create simple dummy road as LineString connecting assets
-- Return layout_id and asset/road GeoJSON
+Add authentication to protect API endpoints:
+- ✅ Middleware to validate JWT tokens from Cognito
+- ✅ Extract user identity (sub, email) from token claims
+- ✅ Fetch Cognito public keys and verify signature
+- ✅ Dependency injection for current_user in route handlers
+- ✅ Protect all /api/* routes except /health
+- ✅ Handle expired/invalid tokens with 401 response
+
+**Implementation Details:**
+
+| File | Purpose |
+|------|---------|
+| `app/api/auth.py` | JWT validation, JWKS fetching, user creation |
+| `app/api/__init__.py` | Auth module exports |
+| `requirements.txt` | Added `python-jose[cryptography]`, `httpx` |
+
+**Features:**
+- CognitoJWKS class manages JWKS endpoint caching (with refresh on key rotation)
+- `decode_token()` verifies JWT with RS256 algorithm
+- `get_current_user()` dependency auto-creates User on first login
+- Auto-updates user email/name from Cognito claims
+- `/api/me` endpoint for testing auth (returns current user info)
 
 **Acceptance Criteria:**
-- Creates Layout and Asset records in database **only for sites owned by current user**
-- Returns GeoJSON with 5-10 point features (assets) and 1-2 line features (roads)
-- Assets fall within site boundary (verify with ST_Within)
-- **Returns 404 if user attempts to generate layout for another user's site**
-- Endpoint completes in <3 seconds
+- ✅ Requests with valid JWT succeed
+- ✅ Requests without token return 401
+- ✅ Expired tokens return 401
+- ✅ current_user available in protected routes
+- ✅ User auto-created on first login
+
+---
+
+### A-09: Initialize React + TypeScript project with routing ✅ COMPLETE
+**Owner:** FE  
+**Story Points:** 2  
+**Dependencies:** None  
+**Completed:** November 25, 2025
+
+Set up frontend application structure:
+- ✅ React + TypeScript with Vite build
+- ✅ React Router v6 with protected routes
+- ✅ AWS Amplify Cognito auth integration
+- ✅ Axios HTTP client with auth interceptor
+- ✅ Professional design system with dark theme
+
+**Routes Implemented:**
+
+| Route | Component | Protection | Status |
+|-------|-----------|-----------|--------|
+| `/` | LandingPage | Public | ✅ Landing with features |
+| `/login` | LoginPage | Public | ✅ Email/password login |
+| `/signup` | SignupPage | Public | ✅ Email verification flow |
+| `/projects` | ProjectsPage | Protected | ✅ Dashboard with placeholders |
+| `/sites/:id` | SiteDetailPage | Protected | ✅ Map + layout controls |
+
+**UI Components:**
+
+| Component | Purpose |
+|-----------|---------|
+| Layout | Header with nav, protected route wrapper |
+| ProtectedRoute | Auth guard for protected routes |
+| AuthContext | Cognito auth state (login, signup, logout) |
+| AuthPages | Login/signup forms with validation |
+| LandingPage | Public landing with hero + features |
+| ProjectsPage | Sites list with upload modal |
+| SiteDetailPage | Site detail with generate layout UI |
+
+**Dependencies Installed:**
+- `react-router-dom` - Client-side routing
+- `axios` - HTTP client
+- `@aws-amplify/auth` - Cognito SDK
+- `@aws-amplify/core` - Amplify core
+- `leaflet` + `react-leaflet` - Map library (prep for A-13)
+- `@types/geojson` - Type definitions
+
+**Design System:**
+- Dark professional theme (Pacifico brand)
+- Color palette: Teal accents (#10b981), dark surfaces (#0a0f14)
+- Typography: IBM Plex Sans/Mono
+- Responsive grid layouts
+- Smooth animations and transitions
+
+**Configuration:**
+- `.env.example` with Cognito variables
+- API client configured for backend integration
+- CORS ready for cross-origin requests
+
+**Acceptance Criteria:**
+- ✅ Dev server runs at localhost:5173
+- ✅ TypeScript compilation succeeds
+- ✅ Navigation between routes works
+- ✅ Environment variables load correctly
+- ✅ Production build outputs to dist/
+
+---
+
+### A-05: Implement POST /api/sites/upload endpoint ✅ COMPLETE
+**Owner:** BE  
+**Story Points:** 5  
+**Dependencies:** A-04  
+**Completed:** November 25, 2025
+
+Create endpoint to accept and process KML/KMZ files:
+- ✅ Accept multipart/form-data with file upload (max 10MB)
+- ✅ Validate file type (.kml, .kmz only)
+- ✅ Parse KML/KMZ using fastkml library, extract first Polygon/MultiPolygon
+- ✅ Convert to GeoJSON format
+- ✅ Store original file in S3 (site-uploads bucket)
+- ✅ Insert Site record with boundary geometry in PostGIS
+- ✅ Calculate and store area_m2 using ST_Area with geography cast
+- ✅ Return site_id and boundary GeoJSON
+
+**Implementation Details:**
+
+| File | Purpose |
+|------|---------|
+| `app/schemas/site.py` | Pydantic schemas for site endpoints |
+| `app/services/kml_parser.py` | KML/KMZ parsing with fastkml + Shapely |
+| `app/services/s3.py` | S3 upload and presigned URL service |
+| `app/api/sites.py` | Sites router with upload, get, list, delete |
+
+**Features:**
+- KML/KMZ parser supports both file types with ZIP extraction
+- Recursively searches KML structure for first polygon
+- Automatic geometry validation with repair for invalid polygons
+- S3 upload with metadata and automatic cleanup on delete
+- Area calculation in square meters using PostGIS geography cast
+- Multi-tenant isolation via owner_id checks
+- 404 indistinguishable for missing/unauthorized sites
+
+**Endpoints Implemented:**
+- `POST /api/sites/upload` - Upload KML/KMZ file
+- `GET /api/sites/{id}` - Get site with GeoJSON boundary
+- `GET /api/sites` - List all sites for current user
+- `DELETE /api/sites/{id}` - Delete site and S3 files
+
+**Acceptance Criteria:**
+- ✅ Valid KML uploads successfully, returns site_id
+- ✅ Site record associated with current_user via owner_id
+- ✅ Boundary stored correctly in PostGIS (ST_AsGeoJSON)
+- ✅ Original file in S3 at `uploads/{site_id}/original.{ext}`
+- ✅ Invalid files return 400 with clear error message
+- ✅ Files >10MB rejected with 413
+- ✅ 404 for non-existent or unauthorized sites
+
+---
+
+### A-06: Implement GET /api/sites/{id} endpoint ✅ COMPLETE
+**Owner:** BE  
+**Story Points:** 2  
+**Dependencies:** A-04  
+**Completed:** November 25, 2025 (included in A-05)
+
+Create endpoint to retrieve site details:
+- ✅ Query Site by ID AND owner_id = current_user.id
+- ✅ Return site metadata (id, name, area_m2, created_at)
+- ✅ Return boundary as GeoJSON using ST_AsGeoJSON
+- ✅ Return 404 for missing or unauthorized sites (indistinguishable)
+
+**Acceptance Criteria:**
+- ✅ Returns site data with valid GeoJSON boundary for sites owned by current user
+- ✅ 404 for non-existent sites or sites owned by other users
+- ✅ Response time <500ms for typical site
+
+---
+
+### A-07: Implement POST /api/layouts/generate with dummy placement ✅ COMPLETE
+**Owner:** BE  
+**Story Points:** 3  
+**Dependencies:** A-04, A-06  
+**Completed:** November 25, 2025
+
+Create endpoint that generates a dummy layout for a site:
+- ✅ Accept site_id and target_capacity_kw config
+- ✅ Load Site by site_id scoped to current_user (owner_id check)
+- ✅ Return 404 if site not owned by user
+- ✅ Create Layout record with status='completed'
+- ✅ Generate 5-10+ dummy assets using grid-based placement within site boundary
+- ✅ Assign types randomly based on weights (solar 60%, battery 20%, generator 15%, substation 5%)
+- ✅ Ensure at least one substation for layouts with 3+ assets
+- ✅ Insert Asset records with POINT geometries
+- ✅ Generate star-topology roads connecting substation to all assets
+- ✅ Return layout_id, assets, and roads as GeoJSON FeatureCollection
+
+**Implementation Details:**
+
+| File | Purpose |
+|------|---------|
+| `app/schemas/layout.py` | Pydantic schemas for layout endpoints |
+| `app/services/layout_generator.py` | Dummy layout generation with grid placement |
+| `app/api/layouts.py` | Layouts router with all endpoints |
+
+**Features:**
+- Grid-based asset placement within site boundary
+- Random fallback for points outside grid
+- Minimum distance enforcement between assets
+- Capacity scaling to target_capacity_kw
+- Configurable asset type weights
+- Star topology road network (hub-and-spoke from substation)
+- Length calculation approximated from coordinates (111km per degree)
+- Full GeoJSON FeatureCollection output for frontend display
+- Multi-tenant isolation via Site.owner_id chain
+
+**Endpoints Implemented:**
+- `POST /api/layouts/generate` - Generate layout for site
+- `GET /api/layouts/{id}` - Get layout with assets and roads
+- `GET /api/layouts` - List layouts (optional site_id filter)
+- `DELETE /api/layouts/{id}` - Delete layout
+
+**Acceptance Criteria:**
+- ✅ Creates Layout and Asset records only for sites owned by current user
+- ✅ Returns GeoJSON FeatureCollection with asset points and road lines
+- ✅ Assets placed within site boundary (grid-based)
+- ✅ Returns 404 if user attempts to generate layout for another user's site
+- ✅ Endpoint completes in <1 second (synchronous in Phase A)
+- ✅ Asset count scales with target_capacity_kw (5-15 assets)
 
 ---
 
