@@ -165,13 +165,16 @@ curl http://$ALB_DNS/health
 | Infrastructure (A-01) | ✅ Deployed | VPC, RDS, S3, Cognito, Bastion |
 | Backend Service (A-02) | ✅ Deployed | ECS Fargate, ALB, ECR |
 | CI/CD Pipeline (A-03) | ✅ Ready | GitHub Actions workflows (see `.github/README.md`) |
-| Backend API Models (A-04) | ✅ Ready | FastAPI + SQLAlchemy + PostGIS |
-| Backend Auth (A-08) | ✅ Ready | Cognito JWT validation, user auto-creation |
-| Site Management (A-05, A-06) | ✅ Ready | KML/KMZ upload, site retrieval with GeoJSON |
-| Layout Generation (A-07) | ✅ Ready | Dummy asset placement, road generation |
-| Frontend Setup (A-09) | ✅ Ready | React + TypeScript + Vite + routing |
-| Frontend Pages (A-09) | ✅ Ready | Landing, Auth, Dashboard, Site Detail |
-| Frontend Integration | ⏳ Next | Connect pages to API (A-10, A-11, A-12, A-13) |
+| Backend API Models (A-04) | ✅ Complete | FastAPI + SQLAlchemy + PostGIS |
+| Backend Auth (A-08) | ✅ Complete | Cognito JWT validation, user auto-creation |
+| Site Management (A-05, A-06) | ✅ Complete | KML/KMZ upload, site retrieval with GeoJSON |
+| Layout Generation (A-07) | ✅ Complete | Dummy asset placement, road generation |
+| Frontend Setup (A-09) | ✅ Complete | React + TypeScript + Vite + routing |
+| Frontend Auth (A-10) | ✅ Complete | Cognito login/signup/logout with Amplify |
+| Frontend Sites & Upload (A-11, A-12) | ✅ Complete | Sites list, drag-drop KML upload |
+| Frontend Map (A-13) | ✅ Complete | Leaflet map with site boundary display |
+| Frontend Layout Generation (A-14) | ✅ Complete | Generate button, asset & road display |
+| Frontend Deployment (A-15) | ⏳ Next | S3 + CloudFront deployment |
 
 ## Deployment Troubleshooting
 
@@ -225,8 +228,8 @@ The application follows a three-phase MVP approach:
    - Infrastructure: ✅ Complete (A-01, A-02, A-03)
    - Backend foundation: ✅ Complete (A-04, A-08)
    - Backend API: ✅ Complete (A-05, A-06, A-07)
-   - Frontend foundation: ✅ Complete (A-09)
-   - Frontend integration: 🔄 In Progress (A-10-A-15)
+   - Frontend foundation: ✅ Complete (A-09, A-10, A-11, A-12, A-13, A-14)
+   - Frontend deployment: ⏳ Next (A-15)
 
 2. **Phase B** — Real layout engine: Terrain-aware placement, routing, cut/fill
    - DEM fetching & caching, slope computation, asset placement algorithm, road routing, cut/fill
@@ -238,30 +241,41 @@ See `MVP_Task_List.md` in the project root for detailed task breakdown and progr
 
 ## Current Progress
 
-**Completed (Backend: 9/15 tasks, 60%):**
-- ✅ A-01: Infrastructure foundation (VPC, RDS, S3, Cognito, ECR, ALB)
-- ✅ A-02: ECS backend deployment with health checks
-- ✅ A-03: GitHub Actions CI/CD pipeline
-- ✅ A-04: FastAPI app with SQLAlchemy models and PostGIS
-- ✅ A-05: KML/KMZ upload endpoint (fastkml + S3)
-- ✅ A-06: Site retrieval with GeoJSON boundary
-- ✅ A-07: Dummy layout generation (grid-based placement)
-- ✅ A-08: Cognito JWT authentication with auto-user-creation
-- ✅ A-09: React frontend with routing, auth context, and UI scaffolding
+**Completed (Phase A: 14/15 tasks, 93%):**
+
+**Infrastructure & Backend (9 tasks):**
+- ✅ A-01: Infrastructure foundation (VPC, RDS, S3, Cognito, ECR, ALB, Bastion)
+- ✅ A-02: ECS backend deployment with health checks and auto-scaling
+- ✅ A-03: GitHub Actions CI/CD pipeline with OIDC authentication
+- ✅ A-04: FastAPI app with SQLAlchemy models and PostGIS geometry support
+- ✅ A-05: KML/KMZ upload endpoint with S3 storage and GeoJSON conversion
+- ✅ A-06: Site retrieval with GeoJSON boundary and area calculation
+- ✅ A-07: Dummy layout generation (grid-based asset placement with star-topology roads)
+- ✅ A-08: Cognito JWT authentication middleware with auto-user-creation
+- ✅ A-09: React frontend with TypeScript, Vite, routing, and brand styling
+
+**Frontend Integration (5 tasks):**
+- ✅ A-10: Cognito authentication (login/signup/logout with email verification)
+- ✅ A-11: Sites dashboard with file upload modal and site deletion
+- ✅ A-12: KML/KMZ drag-and-drop upload component with progress feedback
+- ✅ A-13: Leaflet map with site boundary display and auto-zoom
+- ✅ A-14: Layout generation button with asset markers and road display on map
 
 **Backend API Summary:**
-- **Sites API**: POST/GET /api/sites, GET /api/sites/{id}, DELETE /api/sites/{id}
+- **Sites API**: POST/GET /api/sites, GET /api/sites/{id}, DELETE /api/sites/{id}, POST /api/sites/upload
 - **Layouts API**: POST/GET /api/layouts, GET /api/layouts/{id}, DELETE /api/layouts/{id}
-- **Auth API**: POST /api/me (get current user)
-- **Health**: GET /health, GET /health/ready
+- **Auth API**: GET /api/me (get current user)
+- **Health**: GET /health, GET /health/ready (with DB connectivity check)
 
-**Next Steps (Frontend Integration):**
-1. **A-10** - Connect frontend auth UI to Cognito
-2. **A-11** - Projects/sites management UI (list, delete)
-3. **A-12** - KML upload component (drag-drop)
-4. **A-13** - Leaflet map integration (display site boundaries)
-5. **A-14** - Generate Layout button + results display
-6. **A-15** - Deploy frontend to S3 + CloudFront
+**Frontend Features:**
+- Complete authentication flow with Cognito and email verification
+- Sites dashboard with upload, delete, and navigation
+- Interactive map display of site boundaries and generated layouts
+- Asset placement visualization with type-based color coding
+- Road network display
+
+**Next Steps (Final Phase A Task):**
+1. **A-15** - Deploy frontend to S3 + CloudFront for production access
 
 ## License
 

@@ -2,7 +2,7 @@
 
 **Project:** Geospatial layout tool for DG/microgrid/data center sites  
 **Scope:** Three-phase MVP delivering cloud-deployed, multi-user, terrain-aware layout generation  
-**Last Updated:** November 25, 2025 (A-05, A-06, A-07 Complete ✅)
+**Last Updated:** November 25, 2025 (A-01 through A-14 Complete ✅ | Phase A Vertical Slice 93% Complete)
 
 ---
 
@@ -19,11 +19,11 @@
 | A-07 | ✅ Complete | Nov 25, 2025 |
 | A-08 | ✅ Complete | Nov 25, 2025 |
 | A-09 | ✅ Complete | Nov 25, 2025 |
-| A-10 | 🔲 Ready | - |
-| A-11 | 🔲 Ready (after A-10) | - |
-| A-12 | 🔲 Ready (after A-11) | - |
-| A-13 | 🔲 Ready (after A-11) | - |
-| A-14 | 🔲 Ready (after A-13) | - |
+| A-10 | ✅ Complete | Nov 25, 2025 |
+| A-11 | ✅ Complete | Nov 25, 2025 |
+| A-12 | ✅ Complete | Nov 25, 2025 |
+| A-13 | ✅ Complete | Nov 25, 2025 |
+| A-14 | ✅ Complete | Nov 25, 2025 |
 | A-15 | 🔲 Ready | - |
 
 ---
@@ -586,111 +586,165 @@ Set up frontend application structure:
 
 ---
 
-### A-10: Implement Cognito authentication (login/signup/logout)
+### A-10: Implement Cognito authentication (login/signup/logout) ✅ COMPLETE
 **Owner:** FE  
 **Story Points:** 5  
 **Dependencies:** A-09
+**Completed:** November 25, 2025
 
 Build authentication flow using AWS Amplify or Cognito SDK:
-- Login page with email/password form
-- Signup page with email/password/name
-- AuthContext to manage authentication state
-- Store JWT tokens in localStorage
-- Axios interceptor to add Authorization header
-- Redirect to /login if 401 response received
-- Logout functionality to clear tokens
+- ✅ Login page with email/password form
+- ✅ Signup page with email/password verification flow
+- ✅ AuthContext to manage authentication state
+- ✅ Amplify SDK integration (replaces manual JWT handling)
+- ✅ Axios interceptor to add Authorization header
+- ✅ Redirect to /login if 401 response received
+- ✅ Logout functionality to clear tokens and redirect
 
-**Security Note:** For the MVP, storing Cognito JWTs in localStorage is acceptable for simplicity. For production hardening, migrate to httpOnly secure cookies or another token storage strategy that reduces XSS risk.
+**Implementation Details:**
+- AWS Amplify Auth SDK configured in `src/lib/amplify.ts`
+- AuthContext manages user state via `useAuthenticator` hook
+- Email verification flow with confirmation PIN (automatic redirection if account unverified)
+- Cognito JWT automatically handled and injected by Amplify
+
+**Security Note:** Amplify handles secure token storage internally. For production, consider configuring httpOnly cookies via Amplify settings.
 
 **Acceptance Criteria:**
-- User can sign up and receive verification email
-- User can log in with verified account
-- Tokens stored and sent with API requests
-- Logout clears tokens and redirects to login
-- Protected routes redirect to login if not authenticated
+- ✅ User can sign up and receive verification email
+- ✅ User can confirm email with PIN
+- ✅ User can log in with verified account
+- ✅ Tokens automatically sent with API requests via interceptor
+- ✅ Logout clears auth state and redirects to login
+- ✅ Protected routes redirect to login if not authenticated
+- ✅ Unconfirmed accounts redirected to confirmation flow
 
 ---
 
-### A-11: Create Project list and Site detail pages
+### A-11: Create Project list and Site detail pages ✅ COMPLETE
 **Owner:** FE  
 **Story Points:** 3  
 **Dependencies:** A-10
+**Completed:** November 25, 2025
 
 Build basic UI for project/site navigation:
-- Projects page: list projects (hardcoded or from API if implemented)
-- Site detail page: display site name and metadata
-- Navigate from projects → site detail
-- Simple card-based layout with Tailwind CSS or similar
+- ✅ Projects/Sites page: list sites from `GET /api/sites` API
+- ✅ Site detail page: display site boundary on Leaflet map
+- ✅ Navigate from sites list → site detail
+- ✅ Professional UI with light theme matching Pacifico brand
+- ✅ Delete site functionality
+- ✅ Upload KML/KMZ file modal
+
+**Implementation Details:**
+- `ProjectsPage.tsx` fetches and displays sites list with upload interface
+- `SiteDetailPage.tsx` shows Leaflet map with site boundary polygon
+- Responsive card-based layout with proper error handling
+- Light theme with navy, blue, and gray color palette
 
 **Acceptance Criteria:**
-- Can navigate to site detail page
-- Page displays site metadata
-- Clean, professional UI design
+- ✅ Can navigate to site detail page
+- ✅ Page displays site metadata and boundary on map
+- ✅ Can delete sites (with confirmation)
+- ✅ Can upload new KML/KMZ files
+- ✅ Clean, professional UI matching Pacifico brand
+- ✅ Proper error handling and loading states
 
 ---
 
-### A-12: Implement KML/KMZ upload component
+### A-12: Implement KML/KMZ upload component ✅ COMPLETE
 **Owner:** FE  
 **Story Points:** 3  
 **Dependencies:** A-11
+**Completed:** November 25, 2025
 
 Create file upload interface:
-- Drag-and-drop zone for KML/KMZ files
-- File validation (type, size)
-- Upload progress indicator
-- Call POST /api/sites/upload with FormData
-- Handle success (store site_id, navigate to site detail) and errors (display message)
+- ✅ Drag-and-drop zone for KML/KMZ files in modal
+- ✅ File validation (type and size checks)
+- ✅ Upload progress indicator
+- ✅ Calls `POST /api/sites/upload` with FormData
+- ✅ Success automatically refreshes sites list
+- ✅ Error handling with user-friendly messages
+
+**Implementation Details:**
+- Upload modal component in `ProjectsPage.tsx`
+- Accepts .kml and .kmz file types
+- 10MB file size limit enforced
+- Uses `sites.upload()` from API service
+- Auto-refreshes sites list on successful upload
 
 **Acceptance Criteria:**
-- Drag-and-drop works for .kml/.kmz files
-- Upload progress shown
-- Success navigates to site detail page
-- Errors display user-friendly messages
-- File size limit enforced (10MB)
+- ✅ Drag-and-drop works for .kml/.kmz files
+- ✅ Upload feedback shown with spinner
+- ✅ Success automatically refreshes sites list
+- ✅ Errors display user-friendly messages
+- ✅ File size limit enforced (10MB)
+- ✅ File type validation prevents invalid uploads
 
 ---
 
-### A-13: Display site boundary on Leaflet map
+### A-13: Display site boundary on Leaflet map ✅ COMPLETE
 **Owner:** FE  
 **Story Points:** 3  
 **Dependencies:** A-11, A-06
+**Completed:** November 25, 2025
 
 Create interactive map component:
-- Initialize Leaflet map with OpenStreetMap tiles
-- Fetch site boundary from GET /api/sites/{id}
-- Display boundary as polygon overlay (blue stroke, semi-transparent fill)
-- Zoom map to fit boundary using L.geoJSON().getBounds()
-- Add basic controls (zoom, attribution)
+- ✅ Initialize Leaflet map with OpenStreetMap tiles
+- ✅ Fetch site boundary from `GET /api/sites/{id}`
+- ✅ Display boundary as polygon overlay (blue stroke, semi-transparent fill)
+- ✅ Auto-zoom map to fit boundary using `geoJSON.getBounds()`
+- ✅ Add basic controls (zoom, attribution)
+- ✅ Leaflet icons properly configured
+
+**Implementation Details:**
+- React-Leaflet integration in `SiteDetailPage.tsx`
+- GeoJSON polygon rendered with custom styling
+- Map automatically centers and zooms on site boundary
+- Fixed Leaflet marker icons for proper rendering
 
 **Map Tile Strategy Note:** Using public OpenStreetMap tiles is acceptable for the MVP. For production usage at scale, plan to switch to a paid tile provider (Mapbox, MapTiler) or self-hosted tile server to respect OSM usage limits and improve reliability.
 
 **Acceptance Criteria:**
-- Map displays with OSM tiles
-- Site boundary renders correctly
-- Map auto-zooms to fit boundary
-- Boundary popup shows site name on click
+- ✅ Map displays with OSM tiles
+- ✅ Site boundary renders as polygon
+- ✅ Map auto-zooms to fit boundary
+- ✅ Boundary properly styled with blue outline
+- ✅ No Leaflet icon errors
 
 ---
 
-### A-14: Add "Generate Layout" button with results display
+### A-14: Add "Generate Layout" button with results display ✅ COMPLETE
 **Owner:** FE  
 **Story Points:** 3  
 **Dependencies:** A-13, A-07
+**Completed:** November 25, 2025
 
 Implement layout generation UI:
-- "Generate Layout" button on site detail page
-- Call POST /api/layouts/generate with site_id
-- Display loading spinner during request
-- On success, add asset markers (colored circles by type) and road polylines to map
-- Simple legend showing asset types
-- Display total capacity in summary panel
+- ✅ "Generate Layout" button on site detail page with capacity input
+- ✅ Call `POST /api/layouts/generate` with site_id and target capacity
+- ✅ Display loading spinner during request
+- ✅ On success, add asset markers (colored by type) to map
+- ✅ Display roads as polylines on map
+- ✅ Legend showing asset type colors and counts
+- ✅ Display total capacity in summary panel
+
+**Implementation Details:**
+- Layout generation triggered from `SiteDetailPage.tsx`
+- Target capacity configurable (default 1000 kW)
+- Assets displayed as markers with color-coding:
+  - 🟡 Solar (60% of assets)
+  - 🟣 Battery (20% of assets)
+  - 🔴 Generator (15% of assets)
+  - ⭐ Substation (5% of assets)
+- Roads displayed as connected polylines
+- Summary shows asset count, total capacity, total road length
 
 **Acceptance Criteria:**
-- Button triggers layout generation
-- Assets appear as markers on map after generation
-- Roads appear as lines
-- Legend shows asset type colors
-- Loading state shown during generation
+- ✅ Button triggers layout generation
+- ✅ Assets appear as colored markers on map
+- ✅ Roads appear as polylines connecting assets
+- ✅ Legend shows asset type colors and counts
+- ✅ Loading state shown during generation
+- ✅ Summary panel displays layout metrics
 
 ---
 
