@@ -6,7 +6,7 @@ This document explains how to configure GitHub Actions for automated deployments
 
 Two workflows are configured:
 - **Backend Deploy** (`backend-deploy.yml`): Builds Docker image → Pushes to ECR → Updates ECS service
-- **Frontend Deploy** (`frontend-deploy.yml`): Builds React app → Syncs to S3 → Invalidates CloudFront (when configured)
+- **Frontend Deploy** (`frontend-deploy.yml`): Builds React app → Syncs to S3 → Invalidates CloudFront cache
 
 Both workflows:
 - Trigger on push to `main` branch (when relevant files change)
@@ -62,11 +62,7 @@ Add the following secrets:
 | `VITE_API_URL` | Backend API URL | `terraform output backend_api_url` |
 | `VITE_COGNITO_USER_POOL_ID` | Cognito User Pool ID | `terraform output cognito_user_pool_id` |
 | `VITE_COGNITO_CLIENT_ID` | Cognito Client ID | `terraform output cognito_client_id` |
-
-#### Optional Secrets (for future CloudFront setup in A-15):
-| Secret Name | Description | How to Get |
-|-------------|-------------|------------|
-| `CLOUDFRONT_DISTRIBUTION_ID` | CloudFront distribution ID | After A-15 is complete |
+| `CLOUDFRONT_DISTRIBUTION_ID` | CloudFront distribution ID | `terraform output cloudfront_distribution_id` |
 
 ### Step 5: Test the Workflows
 
@@ -119,12 +115,12 @@ git commit -m "Clean up test files" && git push
 3. Configure AWS credentials via OIDC
 4. Install dependencies (`npm ci`)
 5. Run linter
-6. Build production bundle
+6. Build production bundle with environment variables
 7. Sync to S3 with appropriate cache headers
-8. Invalidate CloudFront (when configured)
-9. Verify deployment
+8. Invalidate CloudFront cache (waits for completion)
+9. Verify deployment and output frontend URL
 
-**Expected Duration:** ~2 minutes
+**Expected Duration:** ~3-4 minutes (includes CloudFront invalidation)
 
 ## Troubleshooting
 

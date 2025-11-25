@@ -16,7 +16,7 @@ import {
   confirmSignUp,
   type SignInInput,
   type SignUpInput,
-} from '@aws-amplify/auth';
+} from 'aws-amplify/auth';
 import type { AuthState, User } from '../types';
 
 interface AuthContextType extends AuthState {

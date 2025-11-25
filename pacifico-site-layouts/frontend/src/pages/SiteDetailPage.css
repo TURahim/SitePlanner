@@ -1,23 +1,31 @@
-/* Site Detail Page Styles */
+/* ==========================================================================
+   Site Detail Page - Pacifico Brand Light Theme
+   ========================================================================== */
 
 .site-detail-page {
   flex: 1;
   display: flex;
-  height: calc(100vh - 64px);
+  height: calc(100vh - 72px);
 }
 
+/* ==========================================================================
+   Sidebar
+   ========================================================================== */
+
 .site-sidebar {
-  width: 360px;
-  background: var(--surface-elevated);
+  width: 380px;
+  background: var(--surface-base);
   border-right: 1px solid var(--border-subtle);
   display: flex;
   flex-direction: column;
   overflow-y: auto;
+  box-shadow: var(--shadow-sm);
 }
 
 .sidebar-header {
-  padding: 1rem 1.25rem;
+  padding: 1.25rem 1.5rem;
   border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-elevated);
 }
 
 .back-link {
@@ -28,11 +36,12 @@
   text-decoration: none;
   font-size: 0.875rem;
   font-weight: 500;
-  transition: color 0.15s ease;
+  transition: color 0.2s ease;
 }
 
 .back-link:hover {
-  color: var(--text-primary);
+  color: var(--navy-primary);
+  text-decoration: none;
 }
 
 .back-link svg {
@@ -40,35 +49,39 @@
   height: 18px;
 }
 
+/* ==========================================================================
+   Site Info
+   ========================================================================== */
+
 .site-info {
-  padding: 1.5rem 1.25rem;
+  padding: 1.75rem 1.5rem;
   border-bottom: 1px solid var(--border-subtle);
 }
 
 .site-info h1 {
   font-family: var(--font-display);
-  font-size: 1.375rem;
-  font-weight: 600;
-  margin: 0 0 1rem;
-  color: var(--text-primary);
+  font-size: 1.5rem;
+  font-weight: 500;
+  margin: 0 0 1.25rem;
+  color: var(--navy-primary);
 }
 
 .site-stats {
   display: flex;
-  gap: 2rem;
+  gap: 2.5rem;
 }
 
 .stat {
   display: flex;
   flex-direction: column;
-  gap: 0.125rem;
+  gap: 0.25rem;
 }
 
 .stat-value {
   font-family: var(--font-mono);
-  font-size: 1.25rem;
+  font-size: 1.375rem;
   font-weight: 600;
-  color: var(--text-primary);
+  color: var(--navy-primary);
 }
 
 .stat-label {
@@ -76,30 +89,35 @@
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.05em;
+  font-weight: 500;
 }
 
+/* ==========================================================================
+   Sidebar Sections
+   ========================================================================== */
+
 .sidebar-section {
-  padding: 1.25rem;
+  padding: 1.5rem;
   border-bottom: 1px solid var(--border-subtle);
 }
 
 .sidebar-section h2 {
   font-family: var(--font-display);
-  font-size: 0.9375rem;
-  font-weight: 600;
+  font-size: 1rem;
+  font-weight: 500;
   margin: 0 0 0.5rem;
-  color: var(--text-primary);
+  color: var(--navy-primary);
 }
 
 .sidebar-section > p {
   font-size: 0.875rem;
   color: var(--text-secondary);
-  margin: 0 0 1rem;
-  line-height: 1.5;
+  margin: 0 0 1.25rem;
+  line-height: 1.6;
 }
 
 .sidebar-section .form-group {
-  margin-bottom: 1rem;
+  margin-bottom: 1.25rem;
 }
 
 .sidebar-section .form-group label {
@@ -107,25 +125,31 @@
   font-size: 0.8125rem;
   font-weight: 500;
   color: var(--text-secondary);
-  margin-bottom: 0.375rem;
+  margin-bottom: 0.5rem;
 }
 
 .sidebar-section .form-group input {
   width: 100%;
-  padding: 0.625rem 0.875rem;
+  padding: 0.75rem 1rem;
   border: 1px solid var(--border-default);
-  border-radius: 6px;
-  background: var(--surface-input);
-  color: var(--text-primary);
+  border-radius: var(--radius-md);
+  background: var(--surface-base);
+  color: var(--text-secondary);
   font-size: 0.9375rem;
   font-family: var(--font-mono);
   box-sizing: border-box;
+  transition: all 0.2s ease;
 }
 
 .sidebar-section .form-group input:focus {
   outline: none;
   border-color: var(--accent-primary);
+  box-shadow: 0 0 0 3px var(--accent-light);
 }
+
+/* ==========================================================================
+   Generate Button
+   ========================================================================== */
 
 .btn-generate {
   width: 100%;
@@ -133,24 +157,26 @@
   align-items: center;
   justify-content: center;
   gap: 0.5rem;
-  padding: 0.75rem 1rem;
+  padding: 0.875rem 1rem;
   background: var(--accent-primary);
-  color: var(--accent-text);
+  color: var(--text-on-accent);
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   font-weight: 600;
-  font-size: 0.9375rem;
+  font-size: 1rem;
   cursor: pointer;
   transition: all 0.2s ease;
 }
 
 .btn-generate svg {
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
 }
 
 .btn-generate:hover:not(:disabled) {
   background: var(--accent-hover);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
 }
 
 .btn-generate:disabled {
@@ -159,8 +185,8 @@
 }
 
 .spinner {
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
   border: 2px solid transparent;
   border-top-color: currentColor;
   border-radius: 50%;
@@ -173,28 +199,32 @@
   }
 }
 
+/* ==========================================================================
+   Export Buttons
+   ========================================================================== */
+
 .export-buttons {
   display: flex;
-  gap: 0.5rem;
+  gap: 0.625rem;
 }
 
 .btn-export {
   flex: 1;
-  padding: 0.625rem 0.75rem;
+  padding: 0.75rem 0.875rem;
   background: var(--surface-base);
   color: var(--text-secondary);
   border: 1px solid var(--border-default);
-  border-radius: 6px;
-  font-size: 0.8125rem;
+  border-radius: var(--radius-md);
+  font-size: 0.875rem;
   font-weight: 500;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all 0.2s ease;
 }
 
 .btn-export:hover:not(:disabled) {
-  background: var(--surface-hover);
-  color: var(--text-primary);
-  border-color: var(--border-hover);
+  background: var(--surface-elevated);
+  color: var(--navy-primary);
+  border-color: var(--navy-primary);
 }
 
 .btn-export:disabled {
@@ -203,15 +233,168 @@
 }
 
 .export-hint {
-  font-size: 0.75rem;
+  font-size: 0.8125rem;
   color: var(--text-muted);
-  margin: 0.75rem 0 0;
+  margin: 1rem 0 0;
 }
 
-/* Map Container */
+/* ==========================================================================
+   Layout Results
+   ========================================================================== */
+
+.layout-results {
+  background: var(--surface-elevated);
+}
+
+.layout-stats {
+  display: flex;
+  gap: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.layout-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.layout-stat .stat-value {
+  font-family: var(--font-mono);
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: var(--accent-primary);
+}
+
+.layout-stat .stat-label {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* ==========================================================================
+   Legend
+   ========================================================================== */
+
+.legend {
+  padding-top: 1rem;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.legend h3 {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin: 0 0 0.75rem;
+}
+
+.legend-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.legend-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.legend-label {
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+}
+
+/* ==========================================================================
+   Danger Zone
+   ========================================================================== */
+
+.danger-zone {
+  margin-top: auto;
+}
+
+.danger-zone h2 {
+  color: var(--error);
+}
+
+.btn-delete {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  background: transparent;
+  color: var(--error);
+  border: 1px solid var(--error);
+  border-radius: var(--radius-md);
+  font-weight: 500;
+  font-size: 0.9375rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-delete svg {
+  width: 18px;
+  height: 18px;
+}
+
+.btn-delete:hover {
+  background: var(--error);
+  color: white;
+}
+
+/* ==========================================================================
+   Loading & Error States
+   ========================================================================== */
+
+.loading-state,
+.error-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 3rem 1.5rem;
+  text-align: center;
+  gap: 1rem;
+}
+
+.loading-state p,
+.error-state p {
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.btn-back {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.625rem 1.25rem;
+  background: var(--accent-primary);
+  color: var(--text-on-accent);
+  border-radius: var(--radius-md);
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.btn-back:hover {
+  background: var(--accent-hover);
+  text-decoration: none;
+}
+
+/* ==========================================================================
+   Map Container
+   ========================================================================== */
+
 .map-container {
   flex: 1;
-  background: var(--surface-base);
+  background: var(--surface-section);
   position: relative;
 }
 
@@ -226,28 +409,60 @@
   background: 
     linear-gradient(var(--border-subtle) 1px, transparent 1px),
     linear-gradient(90deg, var(--border-subtle) 1px, transparent 1px);
-  background-size: 40px 40px;
+  background-size: 50px 50px;
 }
 
 .map-placeholder svg {
-  width: 64px;
-  height: 64px;
-  margin-bottom: 1rem;
-  opacity: 0.5;
+  width: 72px;
+  height: 72px;
+  margin-bottom: 1.25rem;
+  opacity: 0.4;
+  color: var(--navy-primary);
 }
 
 .map-placeholder p {
-  font-size: 1.125rem;
-  margin: 0 0 0.25rem;
+  font-size: 1.25rem;
+  margin: 0 0 0.375rem;
+  color: var(--navy-primary);
+  font-weight: 500;
 }
 
 .map-placeholder span {
-  font-size: 0.875rem;
+  font-size: 0.9rem;
   opacity: 0.7;
 }
 
-/* Responsive */
-@media (max-width: 768px) {
+/* Leaflet map overrides */
+.leaflet-container {
+  font-family: var(--font-sans);
+}
+
+.leaflet-popup-content-wrapper {
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+}
+
+.leaflet-popup-content {
+  margin: 0.75rem 1rem;
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.leaflet-popup-content strong {
+  color: var(--navy-primary);
+}
+
+/* Asset marker styling */
+.asset-marker {
+  background: transparent;
+  border: none;
+}
+
+/* ==========================================================================
+   Responsive
+   ========================================================================== */
+
+@media (max-width: 900px) {
   .site-detail-page {
     flex-direction: column;
     height: auto;
@@ -257,10 +472,23 @@
     width: 100%;
     border-right: none;
     border-bottom: 1px solid var(--border-subtle);
+    max-height: none;
   }
 
   .map-container {
-    height: 400px;
+    height: 50vh;
+    min-height: 400px;
+  }
+}
+
+@media (max-width: 480px) {
+  .site-stats {
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .export-buttons {
+    flex-direction: column;
   }
 }
 

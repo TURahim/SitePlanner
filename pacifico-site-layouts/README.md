@@ -98,6 +98,7 @@ Get these values:
 cd pacifico-site-layouts/infra/terraform
 terraform output cognito_user_pool_id
 terraform output cognito_client_id
+terraform output frontend_url  # CloudFront URL for production frontend
 ```
 
 ### Deploy to AWS
@@ -174,7 +175,7 @@ curl http://$ALB_DNS/health
 | Frontend Sites & Upload (A-11, A-12) | ✅ Complete | Sites list, drag-drop KML upload |
 | Frontend Map (A-13) | ✅ Complete | Leaflet map with site boundary display |
 | Frontend Layout Generation (A-14) | ✅ Complete | Generate button, asset & road display |
-| Frontend Deployment (A-15) | ⏳ Next | S3 + CloudFront deployment |
+| Frontend Deployment (A-15) | ✅ Complete | S3 + CloudFront with HTTPS |
 
 ## Deployment Troubleshooting
 
@@ -224,12 +225,12 @@ aws ecs describe-tasks --cluster pacifico-layouts-dev-cluster --tasks $TASK_ID -
 
 The application follows a three-phase MVP approach:
 
-1. **Phase A** — Thin vertical slice: Upload → dummy asset placement → map display
+1. **Phase A** — Thin vertical slice: Upload → dummy asset placement → map display ✅ **COMPLETE**
    - Infrastructure: ✅ Complete (A-01, A-02, A-03)
    - Backend foundation: ✅ Complete (A-04, A-08)
    - Backend API: ✅ Complete (A-05, A-06, A-07)
    - Frontend foundation: ✅ Complete (A-09, A-10, A-11, A-12, A-13, A-14)
-   - Frontend deployment: ⏳ Next (A-15)
+   - Frontend deployment: ✅ Complete (A-15 - CloudFront CDN with HTTPS)
 
 2. **Phase B** — Real layout engine: Terrain-aware placement, routing, cut/fill
    - DEM fetching & caching, slope computation, asset placement algorithm, road routing, cut/fill
@@ -241,7 +242,7 @@ See `MVP_Task_List.md` in the project root for detailed task breakdown and progr
 
 ## Current Progress
 
-**Completed (Phase A: 14/15 tasks, 93%):**
+**Completed (Phase A: 15/15 tasks, 100% ✅):**
 
 **Infrastructure & Backend (9 tasks):**
 - ✅ A-01: Infrastructure foundation (VPC, RDS, S3, Cognito, ECR, ALB, Bastion)
@@ -254,12 +255,13 @@ See `MVP_Task_List.md` in the project root for detailed task breakdown and progr
 - ✅ A-08: Cognito JWT authentication middleware with auto-user-creation
 - ✅ A-09: React frontend with TypeScript, Vite, routing, and brand styling
 
-**Frontend Integration (5 tasks):**
+**Frontend Integration (6 tasks):**
 - ✅ A-10: Cognito authentication (login/signup/logout with email verification)
 - ✅ A-11: Sites dashboard with file upload modal and site deletion
 - ✅ A-12: KML/KMZ drag-and-drop upload component with progress feedback
 - ✅ A-13: Leaflet map with site boundary display and auto-zoom
 - ✅ A-14: Layout generation button with asset markers and road display on map
+- ✅ A-15: CloudFront CDN with S3 OAC, HTTPS, SPA routing support
 
 **Backend API Summary:**
 - **Sites API**: POST/GET /api/sites, GET /api/sites/{id}, DELETE /api/sites/{id}, POST /api/sites/upload
@@ -274,8 +276,10 @@ See `MVP_Task_List.md` in the project root for detailed task breakdown and progr
 - Asset placement visualization with type-based color coding
 - Road network display
 
-**Next Steps (Final Phase A Task):**
-1. **A-15** - Deploy frontend to S3 + CloudFront for production access
+**Next Steps (Phase B - Real Layout Engine):**
+1. **B-01** - Implement DEM fetching for site bounding box (terrain data)
+2. **B-02** - Compute slope raster from DEM using GDAL/Rasterio
+3. **B-04** - Implement heuristic asset placement algorithm with terrain awareness
 
 ## License
 

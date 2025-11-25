@@ -240,30 +240,17 @@ resource "aws_s3_bucket" "frontend_assets" {
 resource "aws_s3_bucket_public_access_block" "frontend_assets" {
   bucket = aws_s3_bucket.frontend_assets.id
 
-  block_public_acls       = false
-  block_public_policy     = false
-  ignore_public_acls      = false
-  restrict_public_buckets = false
+  # Block public access - CloudFront OAC provides secure access (A-15)
+  block_public_acls       = true
+  block_public_policy     = false # Allow CloudFront policy to be applied
+  ignore_public_acls      = true
+  restrict_public_buckets = false # Allow CloudFront policy to be applied
 }
 
-resource "aws_s3_bucket_policy" "frontend_assets" {
-  bucket = aws_s3_bucket.frontend_assets.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Sid       = "PublicReadGetObject"
-        Effect    = "Allow"
-        Principal = "*"
-        Action    = "s3:GetObject"
-        Resource  = "${aws_s3_bucket.frontend_assets.arn}/*"
-      }
-    ]
-  })
-
-  depends_on = [aws_s3_bucket_public_access_block.frontend_assets]
-}
+# NOTE: S3 bucket policy moved to cloudfront.tf (A-15)
+# CloudFront OAC replaces public bucket access for better security
+# The policy in cloudfront.tf allows CloudFront to access the bucket
+# while blocking direct public access.
 
 resource "aws_s3_bucket_website_configuration" "frontend_assets" {
   bucket = aws_s3_bucket.frontend_assets.id
@@ -749,9 +736,9 @@ resource "aws_ecr_lifecycle_policy" "backend" {
         rulePriority = 1
         description  = "Keep last 10 images"
         selection = {
-          tagStatus     = "any"
-          countType     = "imageCountMoreThan"
-          countNumber   = 10
+          tagStatus   = "any"
+          countType   = "imageCountMoreThan"
+          countNumber = 10
         }
         action = {
           type = "expire"

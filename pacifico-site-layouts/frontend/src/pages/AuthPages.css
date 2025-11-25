@@ -1,4 +1,6 @@
-/* Authentication Pages Styles */
+/* ==========================================================================
+   Authentication Pages - Pacifico Brand Light Theme
+   ========================================================================== */
 
 .auth-page {
   flex: 1;
@@ -7,13 +9,14 @@
   justify-content: center;
   padding: 2rem;
   background: 
-    radial-gradient(ellipse 50% 50% at 50% 0%, var(--accent-glow) 0%, transparent 50%),
+    radial-gradient(ellipse 80% 50% at 50% -20%, var(--surface-section) 0%, transparent 60%),
     var(--surface-base);
+  min-height: calc(100vh - 72px);
 }
 
 .auth-container {
   width: 100%;
-  max-width: 400px;
+  max-width: 420px;
   animation: fadeIn 0.4s ease-out;
 }
 
@@ -28,6 +31,10 @@
   }
 }
 
+/* ==========================================================================
+   Header
+   ========================================================================== */
+
 .auth-header {
   text-align: center;
   margin-bottom: 2rem;
@@ -35,37 +42,53 @@
 
 .auth-header h1 {
   font-family: var(--font-display);
-  font-size: 1.75rem;
-  font-weight: 600;
+  font-size: 1.875rem;
+  font-weight: 500;
   margin: 0 0 0.5rem;
-  color: var(--text-primary);
+  color: var(--navy-primary);
 }
 
 .auth-header p {
   color: var(--text-secondary);
   margin: 0;
+  font-size: 1rem;
 }
 
 .auth-header strong {
-  color: var(--text-primary);
+  color: var(--navy-primary);
+  font-weight: 500;
 }
+
+/* ==========================================================================
+   Form Card
+   ========================================================================== */
 
 .auth-form {
-  background: var(--surface-elevated);
+  background: var(--surface-base);
   border: 1px solid var(--border-subtle);
-  border-radius: 12px;
+  border-radius: var(--radius-xl);
   padding: 2rem;
+  box-shadow: var(--shadow-lg);
 }
 
+/* ==========================================================================
+   Error State
+   ========================================================================== */
+
 .auth-error {
-  background: rgba(239, 68, 68, 0.1);
+  background: var(--error-light);
   border: 1px solid rgba(239, 68, 68, 0.3);
-  color: #f87171;
+  color: var(--error);
   padding: 0.875rem 1rem;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   margin-bottom: 1.5rem;
   font-size: 0.9rem;
+  font-weight: 500;
 }
+
+/* ==========================================================================
+   Form Fields
+   ========================================================================== */
 
 .form-group {
   margin-bottom: 1.25rem;
@@ -76,18 +99,18 @@
   margin-bottom: 0.5rem;
   font-size: 0.9rem;
   font-weight: 500;
-  color: var(--text-primary);
+  color: var(--navy-primary);
 }
 
 .form-group input {
   width: 100%;
-  padding: 0.75rem 1rem;
+  padding: 0.875rem 1rem;
   border: 1px solid var(--border-default);
-  border-radius: 8px;
-  background: var(--surface-input);
-  color: var(--text-primary);
+  border-radius: var(--radius-md);
+  background: var(--surface-base);
+  color: var(--text-secondary);
   font-size: 1rem;
-  transition: all 0.15s ease;
+  transition: all 0.2s ease;
   box-sizing: border-box;
 }
 
@@ -98,7 +121,7 @@
 .form-group input:focus {
   outline: none;
   border-color: var(--accent-primary);
-  box-shadow: 0 0 0 3px var(--accent-glow);
+  box-shadow: 0 0 0 3px var(--accent-light);
 }
 
 .form-hint {
@@ -108,13 +131,17 @@
   color: var(--text-muted);
 }
 
+/* ==========================================================================
+   Submit Button
+   ========================================================================== */
+
 .auth-submit {
   width: 100%;
   padding: 0.875rem 1.5rem;
   background: var(--accent-primary);
-  color: var(--accent-text);
+  color: var(--text-on-accent);
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   font-size: 1rem;
   font-weight: 600;
   cursor: pointer;
@@ -124,12 +151,18 @@
 
 .auth-submit:hover:not(:disabled) {
   background: var(--accent-hover);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
 }
 
 .auth-submit:disabled {
   opacity: 0.6;
   cursor: not-allowed;
 }
+
+/* ==========================================================================
+   Footer / Links
+   ========================================================================== */
 
 .auth-footer {
   text-align: center;
@@ -139,19 +172,20 @@
 }
 
 .auth-footer a {
-  color: var(--accent-primary);
+  color: var(--accent-secondary);
   text-decoration: none;
   font-weight: 500;
 }
 
 .auth-footer a:hover {
+  color: var(--accent-primary);
   text-decoration: underline;
 }
 
 .link-button {
   background: none;
   border: none;
-  color: var(--accent-primary);
+  color: var(--accent-secondary);
   font: inherit;
   font-weight: 500;
   cursor: pointer;
@@ -159,6 +193,38 @@
 }
 
 .link-button:hover {
+  color: var(--accent-primary);
   text-decoration: underline;
 }
 
+/* ==========================================================================
+   Success Message
+   ========================================================================== */
+
+.auth-success {
+  background: var(--success-light);
+  border: 1px solid rgba(34, 197, 94, 0.3);
+  color: var(--success);
+  padding: 0.875rem 1rem;
+  border-radius: var(--radius-md);
+  margin-bottom: 1.5rem;
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+/* ==========================================================================
+   Footer Actions
+   ========================================================================== */
+
+.auth-footer-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  margin-top: 1.5rem;
+  font-size: 0.9rem;
+}
+
+.auth-footer-actions .divider {
+  color: var(--text-muted);
+}

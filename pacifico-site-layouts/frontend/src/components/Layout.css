@@ -1,4 +1,6 @@
-/* Layout Component Styles */
+/* ==========================================================================
+   Layout Component - Pacifico Brand Light Theme
+   ========================================================================== */
 
 .app-layout {
   min-height: 100vh;
@@ -6,53 +8,69 @@
   flex-direction: column;
 }
 
+/* ==========================================================================
+   Header
+   ========================================================================== */
+
 .app-header {
-  background: var(--surface-elevated);
+  background: var(--surface-base);
   border-bottom: 1px solid var(--border-subtle);
   position: sticky;
   top: 0;
   z-index: 100;
-  backdrop-filter: blur(8px);
+  box-shadow: var(--shadow-sm);
 }
 
 .header-content {
   max-width: 1400px;
   margin: 0 auto;
-  padding: 0 1.5rem;
-  height: 64px;
+  padding: 0 2rem;
+  height: 72px;
   display: flex;
   align-items: center;
   justify-content: space-between;
 }
 
+/* ==========================================================================
+   Logo
+   ========================================================================== */
+
 .logo-link {
+  text-decoration: none;
+}
+
+.logo-link:hover {
   text-decoration: none;
 }
 
 .logo {
   display: flex;
   align-items: center;
-  gap: 0.625rem;
+  gap: 0.75rem;
 }
 
 .logo-icon {
-  width: 28px;
-  height: 28px;
-  color: var(--accent-primary);
+  width: 32px;
+  height: 32px;
+  color: var(--navy-primary);
 }
 
 .logo-text {
   font-family: var(--font-display);
   font-size: 1.375rem;
   font-weight: 600;
-  color: var(--text-primary);
+  color: var(--navy-primary);
   letter-spacing: -0.02em;
 }
+
+/* ==========================================================================
+   Navigation
+   ========================================================================== */
 
 .nav-links {
   display: flex;
   align-items: center;
-  gap: 1.5rem;
+  gap: 2rem;
 }
 
 .nav-link {
@@ -60,12 +78,33 @@
   text-decoration: none;
   font-weight: 500;
   font-size: 0.9375rem;
-  transition: color 0.15s ease;
+  transition: color 0.2s ease;
+  position: relative;
 }
 
 .nav-link:hover {
-  color: var(--text-primary);
+  color: var(--navy-primary);
+  text-decoration: none;
 }
+
+.nav-link::after {
+  content: '';
+  position: absolute;
+  bottom: -4px;
+  left: 0;
+  width: 0;
+  height: 2px;
+  background: var(--accent-primary);
+  transition: width 0.2s ease;
+}
+
+.nav-link:hover::after {
+  width: 100%;
+}
+
+/* ==========================================================================
+   User Menu
+   ========================================================================== */
 
 .user-menu {
   display: flex;
@@ -76,6 +115,7 @@
 .user-email {
   color: var(--text-secondary);
   font-size: 0.875rem;
+  font-weight: 500;
 }
 
 .btn-logout {
@@ -83,39 +123,69 @@
   border: 1px solid var(--border-default);
   color: var(--text-secondary);
   padding: 0.5rem 1rem;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   font-size: 0.875rem;
+  font-weight: 500;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all 0.2s ease;
 }
 
 .btn-logout:hover {
-  background: var(--surface-hover);
-  color: var(--text-primary);
-  border-color: var(--border-hover);
+  background: var(--surface-elevated);
+  color: var(--navy-primary);
+  border-color: var(--navy-primary);
 }
 
-.btn-primary {
+/* ==========================================================================
+   Header Buttons
+   ========================================================================== */
+
+.header-content .btn-primary {
   background: var(--accent-primary);
-  color: var(--accent-text);
-  padding: 0.5rem 1.25rem;
-  border-radius: 6px;
+  color: var(--text-on-accent);
+  padding: 0.625rem 1.25rem;
+  border-radius: var(--radius-md);
   font-weight: 500;
   font-size: 0.9375rem;
   text-decoration: none;
-  transition: all 0.15s ease;
+  transition: all 0.2s ease;
   border: none;
   cursor: pointer;
 }
 
-.btn-primary:hover {
+.header-content .btn-primary:hover {
   background: var(--accent-hover);
   transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+  text-decoration: none;
 }
+
+/* ==========================================================================
+   Main Content
+   ========================================================================== */
 
 .app-main {
   flex: 1;
   display: flex;
   flex-direction: column;
+  background: var(--surface-base);
 }
 
+/* ==========================================================================
+   Responsive
+   ========================================================================== */
+
+@media (max-width: 768px) {
+  .header-content {
+    padding: 0 1rem;
+    height: 64px;
+  }
+
+  .nav-links {
+    gap: 1rem;
+  }
+
+  .user-email {
+    display: none;
+  }
+}

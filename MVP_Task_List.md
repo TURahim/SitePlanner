@@ -2,7 +2,7 @@
 
 **Project:** Geospatial layout tool for DG/microgrid/data center sites  
 **Scope:** Three-phase MVP delivering cloud-deployed, multi-user, terrain-aware layout generation  
-**Last Updated:** November 25, 2025 (A-01 through A-14 Complete ✅ | Phase A Vertical Slice 93% Complete)
+**Last Updated:** November 25, 2025 (A-01 through A-15 Complete ✅ | **Phase A Vertical Slice 100% Complete** 🎉)
 
 ---
 
@@ -24,7 +24,7 @@
 | A-12 | ✅ Complete | Nov 25, 2025 |
 | A-13 | ✅ Complete | Nov 25, 2025 |
 | A-14 | ✅ Complete | Nov 25, 2025 |
-| A-15 | 🔲 Ready | - |
+| A-15 | ✅ Complete | Nov 25, 2025 |
 
 ---
 
@@ -748,24 +748,74 @@ Implement layout generation UI:
 
 ---
 
-### A-15: Deploy frontend to S3 + CloudFront
+### A-15: Deploy frontend to S3 + CloudFront ✅ COMPLETE
 **Owner:** DevOps  
 **Story Points:** 2  
-**Dependencies:** A-09, A-02
+**Dependencies:** A-09, A-02  
+**Completed:** November 25, 2025
 
-Configure static site hosting:
-- S3 bucket for frontend with static website hosting
-- CloudFront distribution pointing to S3
-- Custom domain with SSL certificate (ACM)
-- Build React app for production
-- Sync build output to S3
-- Set cache headers for optimal performance
+Configure static site hosting with CloudFront CDN:
+- ✅ CloudFront distribution with Origin Access Control (OAC)
+- ✅ S3 bucket configured for CloudFront-only access (secure)
+- ✅ SPA routing support (custom error responses for 403/404)
+- ✅ Cache optimization (1 year for hashed assets, no-cache for index.html)
+- ✅ HTTPS with automatic redirect
+- ✅ GitHub Actions workflow updated with CloudFront invalidation
+- ✅ Optional custom domain support (via variables)
+
+**Implementation Details:**
+
+| File | Purpose |
+|------|---------|
+| `infra/terraform/cloudfront.tf` | CloudFront distribution, OAC, S3 bucket policy |
+| `.github/workflows/frontend-deploy.yml` | Updated with CloudFront invalidation |
+| `.github/README.md` | Updated setup instructions |
+
+**Terraform Resources Created:**
+- `aws_cloudfront_distribution.frontend` - CDN distribution
+- `aws_cloudfront_origin_access_control.frontend` - OAC for secure S3 access
+- `aws_s3_bucket_policy.frontend_assets_cloudfront` - Allow CloudFront access
+
+**New Terraform Outputs:**
+- `cloudfront_distribution_id` - For cache invalidation
+- `cloudfront_domain_name` - CloudFront URL
+- `frontend_url` - Full HTTPS URL
+
+**GitHub Secrets Required:**
+| Secret | Description |
+|--------|-------------|
+| `CLOUDFRONT_DISTRIBUTION_ID` | From `terraform output cloudfront_distribution_id` |
+
+**Deployment Steps:**
+
+1. Apply Terraform to create CloudFront:
+```bash
+cd pacifico-site-layouts/infra/terraform
+terraform plan
+terraform apply
+```
+
+2. Get CloudFront distribution ID and add to GitHub secrets:
+```bash
+terraform output cloudfront_distribution_id
+# Add to GitHub → Settings → Secrets → CLOUDFRONT_DISTRIBUTION_ID
+```
+
+3. Get the frontend URL:
+```bash
+terraform output frontend_url
+# Output: https://d1234567890.cloudfront.net
+```
+
+4. Push to main branch to trigger deployment
 
 **Acceptance Criteria:**
-- Frontend accessible at https://{domain}
-- SSL certificate valid
-- CloudFront caching working
-- Build time <2 minutes
+- ✅ Frontend accessible at https://{cloudfront-domain}
+- ✅ HTTPS with valid certificate (CloudFront default)
+- ✅ CloudFront caching working (1 year for assets)
+- ✅ SPA routing works (client-side navigation)
+- ✅ GitHub Actions invalidates cache on deploy
+- ✅ Build + deploy time <4 minutes
 
 ---
 

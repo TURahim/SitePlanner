@@ -8,13 +8,13 @@
 variable "github_org" {
   description = "GitHub organization or username"
   type        = string
-  default     = ""  # Set in terraform.tfvars
+  default     = "" # Set in terraform.tfvars
 }
 
 variable "github_repo" {
   description = "GitHub repository name"
   type        = string
-  default     = ""  # Set in terraform.tfvars
+  default     = "" # Set in terraform.tfvars
 }
 
 # =============================================================================
@@ -23,7 +23,7 @@ variable "github_repo" {
 
 # Only create if github_org and github_repo are set
 locals {
-  enable_github_actions = var.github_org != "" && var.github_repo != ""
+  enable_github_actions    = var.github_org != "" && var.github_repo != ""
   github_oidc_provider_url = "https://token.actions.githubusercontent.com"
 }
 
@@ -215,26 +215,28 @@ resource "aws_iam_role_policy" "github_actions_elb" {
   })
 }
 
-# CloudFront Policy - Invalidate cache (uncomment when CloudFront is configured in A-15)
-# resource "aws_iam_role_policy" "github_actions_cloudfront" {
-#   count = local.enable_github_actions ? 1 : 0
-#
-#   name = "${var.project_prefix}-github-actions-cloudfront"
-#   role = aws_iam_role.github_actions[0].id
-#
-#   policy = jsonencode({
-#     Version = "2012-10-17"
-#     Statement = [
-#       {
-#         Effect = "Allow"
-#         Action = [
-#           "cloudfront:CreateInvalidation"
-#         ]
-#         Resource = aws_cloudfront_distribution.frontend.arn
-#       }
-#     ]
-#   })
-# }
+# CloudFront Policy - Invalidate cache (A-15)
+resource "aws_iam_role_policy" "github_actions_cloudfront" {
+  count = local.enable_github_actions ? 1 : 0
+
+  name = "${var.project_prefix}-github-actions-cloudfront"
+  role = aws_iam_role.github_actions[0].id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "cloudfront:CreateInvalidation",
+          "cloudfront:GetInvalidation",
+          "cloudfront:ListInvalidations"
+        ]
+        Resource = aws_cloudfront_distribution.frontend.arn
+      }
+    ]
+  })
+}
 
 # =============================================================================
 # Outputs

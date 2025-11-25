@@ -20,8 +20,6 @@ env:
   AWS_REGION: us-east-1
   S3_BUCKET: pacifico-layouts-dev-frontend-assets
   NODE_VERSION: '18'
-  # Uncomment when CloudFront is configured (A-15)
-  # CLOUDFRONT_DISTRIBUTION_ID: ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }}
 
 jobs:
   deploy:
@@ -100,26 +98,40 @@ jobs:
           fi
 
       # =======================================================================
-      # CloudFront Invalidation (Uncomment when A-15 is complete)
+      # CloudFront Invalidation (A-15)
       # =======================================================================
-      # - name: Invalidate CloudFront cache
-      #   if: env.CLOUDFRONT_DISTRIBUTION_ID != ''
-      #   run: |
-      #     aws cloudfront create-invalidation \
-      #       --distribution-id $CLOUDFRONT_DISTRIBUTION_ID \
-      #       --paths "/*"
+      - name: Invalidate CloudFront cache
+        env:
+          CLOUDFRONT_DISTRIBUTION_ID: ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }}
+        run: |
+          if [ -n "$CLOUDFRONT_DISTRIBUTION_ID" ]; then
+            echo "Invalidating CloudFront cache..."
+            INVALIDATION_ID=$(aws cloudfront create-invalidation \
+              --distribution-id $CLOUDFRONT_DISTRIBUTION_ID \
+              --paths "/*" \
+              --query 'Invalidation.Id' \
+              --output text)
+            echo "Invalidation created: $INVALIDATION_ID"
+            
+            # Wait for invalidation to complete (optional, for verification)
+            echo "Waiting for invalidation to complete..."
+            aws cloudfront wait invalidation-completed \
+              --distribution-id $CLOUDFRONT_DISTRIBUTION_ID \
+              --id $INVALIDATION_ID
+            echo "✅ CloudFront invalidation complete!"
+          else
+            echo "⚠️ CLOUDFRONT_DISTRIBUTION_ID not set, skipping invalidation"
+          fi
 
       # =======================================================================
       # Verification
       # =======================================================================
       - name: Verify deployment
+        env:
+          CLOUDFRONT_DISTRIBUTION_ID: ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }}
         run: |
           echo "✅ Frontend deployment complete!"
           echo "S3 Bucket: s3://$S3_BUCKET"
-          
-          # Get the S3 website URL
-          WEBSITE_URL="http://${S3_BUCKET}.s3-website-${AWS_REGION}.amazonaws.com"
-          echo "Website URL: $WEBSITE_URL"
           
           # Test if index.html exists
           if aws s3 ls "s3://$S3_BUCKET/index.html" > /dev/null 2>&1; then
@@ -128,4 +140,16 @@ jobs:
             echo "❌ index.html not found in bucket"
             exit 1
           fi
-
+          
+          # Show CloudFront URL if distribution ID is set
+          if [ -n "$CLOUDFRONT_DISTRIBUTION_ID" ]; then
+            # Get CloudFront domain name
+            CF_DOMAIN=$(aws cloudfront get-distribution \
+              --id $CLOUDFRONT_DISTRIBUTION_ID \
+              --query 'Distribution.DomainName' \
+              --output text 2>/dev/null || echo "")
+            
+            if [ -n "$CF_DOMAIN" ]; then
+              echo "🌐 Frontend URL: https://$CF_DOMAIN"
+            fi
+          fi
