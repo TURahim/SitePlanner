@@ -28,6 +28,20 @@ interface AuthContextType extends AuthState {
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
+async function checkAuthState(setState: (state: AuthState) => void) {
+  try {
+    const cognitoUser = await getCurrentUser();
+    const user: User = {
+      id: cognitoUser.userId,
+      email: cognitoUser.signInDetails?.loginId || '',
+      name: cognitoUser.username,
+    };
+    setState({ user, isAuthenticated: true, isLoading: false });
+  } catch {
+    setState({ user: null, isAuthenticated: false, isLoading: false });
+  }
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AuthState>({
     user: null,
@@ -37,35 +51,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Check for existing session on mount
   useEffect(() => {
-    checkAuthState();
+    checkAuthState(setState);
   }, []);
-
-  async function checkAuthState() {
-    try {
-      const cognitoUser = await getCurrentUser();
-      const user: User = {
-        id: cognitoUser.userId,
-        email: cognitoUser.signInDetails?.loginId || '',
-        name: cognitoUser.username,
-      };
-      setState({ user, isAuthenticated: true, isLoading: false });
-    } catch {
-      setState({ user: null, isAuthenticated: false, isLoading: false });
-    }
-  }
 
   async function login(email: string, password: string) {
     const input: SignInInput = { username: email, password };
     const result = await signIn(input);
     
     if (result.isSignedIn) {
-      await checkAuthState();
+      await checkAuthState(setState);
     } else if (result.nextStep?.signInStep === 'CONFIRM_SIGN_UP') {
       throw new Error('Please confirm your email address first');
     }
   }
 
-  async function register(email: string, password: string, name?: string) {
+  const register = async (email: string, password: string, name?: string) => {
     const input: SignUpInput = {
       username: email,
       password,
@@ -79,16 +79,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     
     const result = await signUp(input);
     return { needsConfirmation: !result.isSignUpComplete };
-  }
+  };
 
-  async function confirmRegistration(email: string, code: string) {
+  const confirmRegistration = async (email: string, code: string) => {
     await confirmSignUp({ username: email, confirmationCode: code });
-  }
+  };
 
-  async function logout() {
+  const logout = async () => {
     await signOut();
     setState({ user: null, isAuthenticated: false, isLoading: false });
-  }
+  };
 
   return (
     <AuthContext.Provider
@@ -105,6 +105,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useAuth() {
   const context = useContext(AuthContext);
   if (!context) {

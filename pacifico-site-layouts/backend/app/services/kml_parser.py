@@ -5,11 +5,12 @@ Extracts polygon geometries from KML and KMZ files for site boundary import.
 """
 import io
 import logging
+import re
 import zipfile
+import xml.etree.ElementTree as ET
 from typing import Optional
 
-from fastkml import kml
-from shapely.geometry import MultiPolygon, Polygon, shape
+from shapely.geometry import MultiPolygon, Polygon
 from shapely.geometry.base import BaseGeometry
 
 logger = logging.getLogger(__name__)
@@ -25,10 +26,14 @@ class KMLParser:
     Parser for KML and KMZ files.
     
     Extracts the first Polygon or MultiPolygon geometry from the file.
+    Uses direct XML parsing for reliability across different KML versions.
     """
     
     ALLOWED_EXTENSIONS = {".kml", ".kmz"}
     MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
+    
+    # KML namespace
+    KML_NS = {"kml": "http://www.opengis.net/kml/2.2"}
     
     @classmethod
     def parse(cls, content: bytes, filename: str) -> tuple[Polygon | MultiPolygon, Optional[str]]:
@@ -100,77 +105,112 @@ class KMLParser:
     @classmethod
     def _parse_kml(cls, content: bytes) -> tuple[Polygon | MultiPolygon, Optional[str]]:
         """
-        Parse KML content and extract first polygon geometry.
-        
-        Uses fastkml to parse the KML structure and extract geometries.
+        Parse KML content and extract first polygon geometry using ElementTree.
         """
         try:
-            # Parse KML document
-            k = kml.KML()
-            k.from_string(content)
+            # Parse XML
+            root = ET.fromstring(content)
             
-            # Recursively search for polygon features
-            geometry, name = cls._find_polygon(k)
+            # Handle namespace - KML files typically have a namespace
+            # Extract namespace from root tag if present
+            ns_match = re.match(r'\{(.+?)\}', root.tag)
+            ns = {"kml": ns_match.group(1)} if ns_match else cls.KML_NS
             
-            if geometry is None:
-                raise KMLParseError("No polygon geometry found in KML file")
+            # Find all Placemark elements
+            placemarks = root.findall(".//kml:Placemark", ns)
+            if not placemarks:
+                # Try without namespace (some KML files don't use it)
+                placemarks = root.findall(".//Placemark")
             
-            # Validate the geometry
-            if not geometry.is_valid:
-                # Try to fix invalid geometry
-                geometry = geometry.buffer(0)
-                if not geometry.is_valid:
-                    raise KMLParseError("Invalid polygon geometry that could not be repaired")
+            for placemark in placemarks:
+                # Get placemark name
+                name_elem = placemark.find("kml:name", ns)
+                if name_elem is None:
+                    name_elem = placemark.find("name")
+                name = name_elem.text if name_elem is not None else None
+                
+                # Find Polygon element
+                polygon_elem = placemark.find(".//kml:Polygon", ns)
+                if polygon_elem is None:
+                    polygon_elem = placemark.find(".//Polygon")
+                
+                if polygon_elem is not None:
+                    geometry = cls._parse_polygon(polygon_elem, ns)
+                    if geometry is not None:
+                        return geometry, name
             
-            # Ensure it's a Polygon or MultiPolygon
-            if isinstance(geometry, Polygon):
-                return geometry, name
-            elif isinstance(geometry, MultiPolygon):
-                return geometry, name
-            else:
-                raise KMLParseError(f"Expected Polygon or MultiPolygon, got {type(geometry).__name__}")
+            raise KMLParseError("No polygon geometry found in KML file")
                 
         except KMLParseError:
             raise
+        except ET.ParseError as e:
+            raise KMLParseError(f"Invalid XML: {e}")
         except Exception as e:
             logger.exception(f"KML parsing error: {e}")
             raise KMLParseError(f"Failed to parse KML: {e}")
     
     @classmethod
-    def _find_polygon(
-        cls,
-        element,
-        depth: int = 0
-    ) -> tuple[Optional[BaseGeometry], Optional[str]]:
+    def _parse_polygon(cls, polygon_elem, ns: dict) -> Optional[Polygon]:
         """
-        Recursively search KML element tree for polygon geometry.
-        
-        Returns the first Polygon or MultiPolygon found.
+        Parse a KML Polygon element into a Shapely Polygon.
         """
-        if depth > 20:  # Prevent infinite recursion
-            return None, None
+        # Find outer boundary coordinates
+        outer_boundary = polygon_elem.find(".//kml:outerBoundaryIs//kml:coordinates", ns)
+        if outer_boundary is None:
+            outer_boundary = polygon_elem.find(".//outerBoundaryIs//coordinates")
         
-        # Check if this element has geometry
-        geometry = getattr(element, "geometry", None)
-        if geometry is not None:
-            geom = shape(geometry)
-            if isinstance(geom, (Polygon, MultiPolygon)):
-                name = getattr(element, "name", None)
-                return geom, name
+        if outer_boundary is None or not outer_boundary.text:
+            return None
         
-        # Search in features (Documents, Folders, Placemarks)
-        features = getattr(element, "features", None)
-        if features:
-            try:
-                for feature in features:
-                    geom, name = cls._find_polygon(feature, depth + 1)
-                    if geom is not None:
-                        return geom, name
-            except TypeError:
-                # features might not be iterable in some cases
-                pass
+        # Parse coordinates
+        exterior_coords = cls._parse_coordinates(outer_boundary.text)
+        if len(exterior_coords) < 4:
+            return None
         
-        return None, None
+        # Find inner boundaries (holes)
+        holes = []
+        inner_boundaries = polygon_elem.findall(".//kml:innerBoundaryIs//kml:coordinates", ns)
+        if not inner_boundaries:
+            inner_boundaries = polygon_elem.findall(".//innerBoundaryIs//coordinates")
+        
+        for inner in inner_boundaries:
+            if inner.text:
+                hole_coords = cls._parse_coordinates(inner.text)
+                if len(hole_coords) >= 4:
+                    holes.append(hole_coords)
+        
+        # Create Shapely Polygon
+        try:
+            polygon = Polygon(exterior_coords, holes if holes else None)
+            
+            # Validate and repair if needed
+            if not polygon.is_valid:
+                polygon = polygon.buffer(0)
+            
+            return polygon if polygon.is_valid else None
+        except Exception as e:
+            logger.warning(f"Failed to create polygon: {e}")
+            return None
+    
+    @classmethod
+    def _parse_coordinates(cls, coord_text: str) -> list[tuple[float, float]]:
+        """
+        Parse KML coordinate string into list of (lon, lat) tuples.
+        
+        KML format: "lon,lat,alt lon,lat,alt ..."
+        """
+        coords = []
+        # Split by whitespace and parse each coordinate tuple
+        for coord_str in coord_text.strip().split():
+            parts = coord_str.strip().split(",")
+            if len(parts) >= 2:
+                try:
+                    lon = float(parts[0])
+                    lat = float(parts[1])
+                    coords.append((lon, lat))
+                except ValueError:
+                    continue
+        return coords
     
     @staticmethod
     def geometry_to_wkt(geometry: BaseGeometry) -> str:

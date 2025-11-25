@@ -10,8 +10,11 @@ import type {
   SiteUploadResponse,
   LayoutDetail,
   LayoutListResponse,
-  LayoutGenerateResponse,
   GenerateLayoutRequest,
+  ExportResponse,
+  ExportFormat,
+  LayoutStatusResponse,
+  GenerateLayoutResponseUnion,
 } from '../types';
 
 // =============================================================================
@@ -99,11 +102,23 @@ export async function deleteSite(siteId: string): Promise<void> {
 
 /**
  * Generate a new layout for a site
+ * 
+ * In sync mode (default): Returns full LayoutGenerateResponse immediately
+ * In async mode: Returns LayoutEnqueueResponse with layout_id for polling
  */
 export async function generateLayout(
   request: GenerateLayoutRequest
-): Promise<LayoutGenerateResponse> {
-  const response = await api.post<LayoutGenerateResponse>('/api/layouts/generate', request);
+): Promise<GenerateLayoutResponseUnion> {
+  const response = await api.post<GenerateLayoutResponseUnion>('/api/layouts/generate', request);
+  return response.data;
+}
+
+/**
+ * Get layout generation status (C-04)
+ * Used for polling when async layout generation is enabled
+ */
+export async function getLayoutStatus(layoutId: string): Promise<LayoutStatusResponse> {
+  const response = await api.get<LayoutStatusResponse>(`/api/layouts/${layoutId}/status`);
   return response.data;
 }
 
@@ -130,4 +145,59 @@ export async function getLayoutsForSite(siteId: string): Promise<LayoutListRespo
  */
 export async function deleteLayout(layoutId: string): Promise<void> {
   await api.delete(`/api/layouts/${layoutId}`);
+}
+
+// =============================================================================
+// Export API
+// =============================================================================
+
+/**
+ * Export a layout to the specified format
+ * Returns a presigned URL for download
+ */
+export async function exportLayout(
+  layoutId: string,
+  format: ExportFormat
+): Promise<ExportResponse> {
+  const response = await api.get<ExportResponse>(
+    `/api/layouts/${layoutId}/export/${format}`
+  );
+  return response.data;
+}
+
+/**
+ * Export layout as GeoJSON
+ */
+export async function exportLayoutGeoJSON(layoutId: string): Promise<ExportResponse> {
+  return exportLayout(layoutId, 'geojson');
+}
+
+/**
+ * Export layout as KMZ (Google Earth)
+ */
+export async function exportLayoutKMZ(layoutId: string): Promise<ExportResponse> {
+  return exportLayout(layoutId, 'kmz');
+}
+
+/**
+ * Export layout as PDF report
+ */
+export async function exportLayoutPDF(layoutId: string): Promise<ExportResponse> {
+  return exportLayout(layoutId, 'pdf');
+}
+
+/**
+ * Download a file from a presigned URL
+ * Opens the URL in a new tab or triggers download
+ */
+export function downloadFromUrl(url: string, filename?: string): void {
+  const link = document.createElement('a');
+  link.href = url;
+  link.target = '_blank';
+  if (filename) {
+    link.download = filename;
+  }
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
 }

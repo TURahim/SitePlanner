@@ -7,6 +7,11 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from app.config import get_settings
+
+# Get terrain default from config (environment-specific)
+_settings = get_settings()
+
 
 class GenerateLayoutRequest(BaseModel):
     """Request schema for layout generation."""
@@ -19,7 +24,7 @@ class GenerateLayoutRequest(BaseModel):
         description="Target total capacity in kW",
     )
     use_terrain: bool = Field(
-        default=True,
+        default=_settings.use_terrain,  # From config: USE_TERRAIN env var
         description="Use terrain-aware placement (Phase B). Set False for dummy placement.",
     )
     dem_resolution_m: int = Field(
@@ -112,4 +117,50 @@ class LayoutListResponse(BaseModel):
     
     layouts: list[LayoutListItem]
     total: int
+
+
+# =============================================================================
+# Phase C: Async Layout Generation Schemas
+# =============================================================================
+
+
+class LayoutEnqueueResponse(BaseModel):
+    """Response schema for layout generation job enqueue (C-03)."""
+    
+    layout_id: UUID = Field(..., description="ID of the queued layout")
+    status: str = Field(
+        default="queued",
+        description="Initial status of the layout job"
+    )
+    message: str = Field(
+        default="Layout generation job queued successfully",
+        description="Confirmation message"
+    )
+    
+    class Config:
+        from_attributes = True
+
+
+class LayoutStatusResponse(BaseModel):
+    """Response schema for layout status polling (C-04)."""
+    
+    layout_id: UUID = Field(..., description="ID of the layout")
+    status: str = Field(
+        ...,
+        description="Current status: queued, processing, completed, or failed"
+    )
+    error_message: Optional[str] = Field(
+        None,
+        description="Error message if status is 'failed'"
+    )
+    
+    # Populated only when status is 'completed'
+    total_capacity_kw: Optional[float] = Field(None, description="Total capacity in kW")
+    asset_count: Optional[int] = Field(None, description="Number of assets placed")
+    road_length_m: Optional[float] = Field(None, description="Total road length in meters")
+    cut_volume_m3: Optional[float] = Field(None, description="Cut volume in cubic meters")
+    fill_volume_m3: Optional[float] = Field(None, description="Fill volume in cubic meters")
+    
+    class Config:
+        from_attributes = True
 

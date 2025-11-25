@@ -3,6 +3,7 @@ S3 file storage service.
 
 Handles uploads and downloads to AWS S3 buckets.
 """
+import asyncio
 import logging
 from typing import Optional
 
@@ -77,7 +78,8 @@ class S3Service:
         }
         
         try:
-            self._client.put_object(
+            await asyncio.to_thread(
+                self._client.put_object,
                 Bucket=self.uploads_bucket,
                 Key=s3_key,
                 Body=content,
@@ -108,7 +110,8 @@ class S3Service:
             Presigned URL string
         """
         try:
-            url = self._client.generate_presigned_url(
+            url = await asyncio.to_thread(
+                self._client.generate_presigned_url,
                 "get_object",
                 Params={"Bucket": bucket, "Key": key},
                 ExpiresIn=expires_in,
@@ -129,7 +132,8 @@ class S3Service:
         
         try:
             # List all objects with the prefix
-            response = self._client.list_objects_v2(
+            response = await asyncio.to_thread(
+                self._client.list_objects_v2,
                 Bucket=self.uploads_bucket,
                 Prefix=prefix,
             )
@@ -138,7 +142,8 @@ class S3Service:
             objects = response.get("Contents", [])
             if objects:
                 delete_keys = [{"Key": obj["Key"]} for obj in objects]
-                self._client.delete_objects(
+                await asyncio.to_thread(
+                    self._client.delete_objects,
                     Bucket=self.uploads_bucket,
                     Delete={"Objects": delete_keys},
                 )
@@ -170,7 +175,8 @@ class S3Service:
             S3 key where the file was stored
         """
         try:
-            self._client.put_object(
+            await asyncio.to_thread(
+                self._client.put_object,
                 Bucket=self.outputs_bucket,
                 Key=s3_key,
                 Body=content,
@@ -194,11 +200,14 @@ class S3Service:
             File content as bytes
         """
         try:
-            response = self._client.get_object(
-                Bucket=self.outputs_bucket,
-                Key=s3_key,
-            )
-            return response["Body"].read()
+            def _download():
+                response = self._client.get_object(
+                    Bucket=self.outputs_bucket,
+                    Key=s3_key,
+                )
+                return response["Body"].read()
+            
+            return await asyncio.to_thread(_download)
             
         except ClientError as e:
             logger.error(f"Failed to download terrain file: {e}")
@@ -215,7 +224,8 @@ class S3Service:
             True if file exists, False otherwise
         """
         try:
-            self._client.head_object(
+            await asyncio.to_thread(
+                self._client.head_object,
                 Bucket=self.outputs_bucket,
                 Key=s3_key,
             )
@@ -249,7 +259,8 @@ class S3Service:
             extra_args["Metadata"] = metadata
         
         try:
-            self._client.put_object(
+            await asyncio.to_thread(
+                self._client.put_object,
                 Bucket=self.outputs_bucket,
                 Key=s3_key,
                 Body=content,
@@ -295,7 +306,8 @@ class S3Service:
         prefix = f"terrain/{site_id}/"
         
         try:
-            response = self._client.list_objects_v2(
+            response = await asyncio.to_thread(
+                self._client.list_objects_v2,
                 Bucket=self.outputs_bucket,
                 Prefix=prefix,
             )
@@ -303,7 +315,8 @@ class S3Service:
             objects = response.get("Contents", [])
             if objects:
                 delete_keys = [{"Key": obj["Key"]} for obj in objects]
-                self._client.delete_objects(
+                await asyncio.to_thread(
+                    self._client.delete_objects,
                     Bucket=self.outputs_bucket,
                     Delete={"Objects": delete_keys},
                 )

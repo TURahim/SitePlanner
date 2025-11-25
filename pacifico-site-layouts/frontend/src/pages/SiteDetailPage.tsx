@@ -1,13 +1,33 @@
 /**
  * Site detail page with map and layout controls
+ * 
+ * Supports both sync and async layout generation (Phase C)
  */
 import { useState, useEffect, useRef } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { MapContainer, TileLayer, GeoJSON, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import type { FeatureCollection, Feature } from 'geojson';
-import { getSite, generateLayout, getLayoutsForSite, deleteSite } from '../lib/api';
-import type { Site, LayoutGenerateResponse, LayoutListItem, Asset, Road } from '../types';
+import { 
+  getSite, 
+  generateLayout, 
+  getLayoutsForSite, 
+  deleteSite,
+  exportLayoutGeoJSON,
+  exportLayoutKMZ,
+  exportLayoutPDF,
+  downloadFromUrl,
+} from '../lib/api';
+import { useLayoutPolling, formatElapsedTime } from '../hooks/useLayoutPolling';
+import type { 
+  Site, 
+  LayoutGenerateResponse, 
+  LayoutListItem, 
+  Asset, 
+  Road, 
+  ExportFormat,
+} from '../types';
+import { isAsyncLayoutResponse } from '../types';
 import 'leaflet/dist/leaflet.css';
 import './SiteDetailPage.css';
 
@@ -74,9 +94,62 @@ export function SiteDetailPage() {
   const [currentLayout, setCurrentLayout] = useState<LayoutGenerateResponse | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [targetCapacity, setTargetCapacity] = useState(1000);
+  const [generationError, setGenerationError] = useState<string | null>(null);
+  
+  // Phase C: Async polling state
+  const {
+    status: pollingStatus,
+    isPolling,
+    startPolling,
+    stopPolling,
+    elapsedTime,
+    layoutData: polledLayoutData,
+  } = useLayoutPolling({
+    interval: 2000, // Poll every 2 seconds
+    onComplete: (status) => {
+      console.log('Layout completed:', status);
+      // Refresh layouts list
+      if (id) fetchLayouts(id);
+    },
+    onError: (err) => {
+      setGenerationError(err);
+      setIsGenerating(false);
+    },
+  });
+  
+  // Export state
+  const [exportingFormat, setExportingFormat] = useState<ExportFormat | null>(null);
   
   // Map ref for imperative access
   const mapRef = useRef<L.Map | null>(null);
+  
+  // When polled layout data arrives, convert it to display format
+  useEffect(() => {
+    if (polledLayoutData && pollingStatus?.status === 'completed') {
+      // Convert LayoutDetail to LayoutGenerateResponse format for display
+      const layoutResponse: LayoutGenerateResponse = {
+        layout: {
+          id: polledLayoutData.id,
+          site_id: polledLayoutData.site_id,
+          status: polledLayoutData.status,
+          total_capacity_kw: polledLayoutData.total_capacity_kw,
+          cut_volume_m3: polledLayoutData.cut_volume_m3,
+          fill_volume_m3: polledLayoutData.fill_volume_m3,
+          error_message: polledLayoutData.error_message,
+          created_at: polledLayoutData.created_at,
+          updated_at: polledLayoutData.updated_at,
+        },
+        assets: polledLayoutData.assets,
+        roads: polledLayoutData.roads,
+        geojson: {
+          type: 'FeatureCollection',
+          features: [],
+        },
+      };
+      setCurrentLayout(layoutResponse);
+      setIsGenerating(false);
+    }
+  }, [polledLayoutData, pollingStatus]);
 
   // Fetch site data on mount
   useEffect(() => {
@@ -114,19 +187,37 @@ export function SiteDetailPage() {
     
     try {
       setIsGenerating(true);
+      setGenerationError(null);
+      setCurrentLayout(null);
+      
       const response = await generateLayout({
         site_id: id,
         target_capacity_kw: targetCapacity,
       });
-      setCurrentLayout(response);
-      // Refresh layouts list
-      fetchLayouts(id);
+      
+      // Check if async response (Phase C)
+      if (isAsyncLayoutResponse(response)) {
+        // Async mode: Start polling for status
+        console.log('Async layout generation started:', response.layout_id);
+        startPolling(response.layout_id);
+      } else {
+        // Sync mode: Layout is ready immediately
+        setCurrentLayout(response);
+        setIsGenerating(false);
+        // Refresh layouts list
+        fetchLayouts(id);
+      }
     } catch (err) {
       console.error('Failed to generate layout:', err);
-      alert('Failed to generate layout. Please try again.');
-    } finally {
+      setGenerationError('Failed to generate layout. Please try again.');
       setIsGenerating(false);
     }
+  };
+  
+  const handleCancelGeneration = () => {
+    stopPolling();
+    setIsGenerating(false);
+    setGenerationError(null);
   };
 
   const handleDeleteSite = async () => {
@@ -142,6 +233,35 @@ export function SiteDetailPage() {
     } catch (err) {
       console.error('Failed to delete site:', err);
       alert('Failed to delete site. Please try again.');
+    }
+  };
+
+  const handleExport = async (format: ExportFormat) => {
+    if (!currentLayout) return;
+    
+    try {
+      setExportingFormat(format);
+      
+      let response;
+      switch (format) {
+        case 'geojson':
+          response = await exportLayoutGeoJSON(currentLayout.layout.id);
+          break;
+        case 'kmz':
+          response = await exportLayoutKMZ(currentLayout.layout.id);
+          break;
+        case 'pdf':
+          response = await exportLayoutPDF(currentLayout.layout.id);
+          break;
+      }
+      
+      // Download the file
+      downloadFromUrl(response.download_url, response.filename);
+    } catch (err) {
+      console.error(`Failed to export ${format}:`, err);
+      alert(`Failed to export ${format.toUpperCase()}. Please try again.`);
+    } finally {
+      setExportingFormat(null);
     }
   };
 
@@ -262,28 +382,74 @@ export function SiteDetailPage() {
               min={100}
               max={100000}
               step={100}
+              disabled={isGenerating || isPolling}
             />
           </div>
 
-          <button
-            className="btn-generate"
-            onClick={handleGenerateLayout}
-            disabled={isGenerating}
-          >
-            {isGenerating ? (
-              <>
-                <span className="spinner" />
-                Generating...
-              </>
-            ) : (
-              <>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
-                </svg>
-                Generate Layout
-              </>
-            )}
-          </button>
+          {/* Error message */}
+          {generationError && (
+            <div className="generation-error">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="16" height="16">
+                <circle cx="12" cy="12" r="10" />
+                <line x1="12" y1="8" x2="12" y2="12" />
+                <line x1="12" y1="16" x2="12.01" y2="16" />
+              </svg>
+              <span>{generationError}</span>
+            </div>
+          )}
+
+          {/* Processing state (Phase C async) */}
+          {(isGenerating || isPolling) && pollingStatus && (
+            <div className="processing-state">
+              <div className="processing-header">
+                <div className="processing-spinner" />
+                <span className="processing-status">
+                  {pollingStatus.status === 'queued' && 'Queued...'}
+                  {pollingStatus.status === 'processing' && 'Processing...'}
+                </span>
+              </div>
+              <div className="processing-details">
+                <span className="elapsed-time">
+                  Elapsed: {formatElapsedTime(elapsedTime)}
+                </span>
+                <span className="processing-hint">
+                  {pollingStatus.status === 'queued' 
+                    ? 'Waiting for worker...' 
+                    : 'Generating terrain-aware layout...'}
+                </span>
+              </div>
+              <div className="processing-progress">
+                <div 
+                  className="progress-bar" 
+                  style={{ 
+                    width: pollingStatus.status === 'queued' ? '15%' : '60%',
+                    transition: 'width 0.5s ease-out'
+                  }} 
+                />
+              </div>
+              <button 
+                className="btn-cancel" 
+                onClick={handleCancelGeneration}
+                type="button"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
+
+          {/* Generate button - hidden when processing */}
+          {!isPolling && !isGenerating && (
+            <button
+              className="btn-generate"
+              onClick={handleGenerateLayout}
+              disabled={isGenerating}
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+              </svg>
+              Generate Layout
+            </button>
+          )}
         </div>
 
         {currentLayout && (
@@ -319,16 +485,64 @@ export function SiteDetailPage() {
         )}
 
         <div className="sidebar-section">
-          <h2>Export</h2>
+          <h2>Export Layout</h2>
           <div className="export-buttons">
-            <button className="btn-export" disabled={!currentLayout}>
-              GeoJSON
+            <button 
+              className="btn-export" 
+              disabled={!currentLayout || exportingFormat !== null}
+              onClick={() => handleExport('geojson')}
+            >
+              {exportingFormat === 'geojson' ? (
+                <><span className="spinner-small" /> Exporting...</>
+              ) : (
+                <>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="16" height="16">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                    <polyline points="14 2 14 8 20 8" />
+                    <line x1="16" y1="13" x2="8" y2="13" />
+                    <line x1="16" y1="17" x2="8" y2="17" />
+                  </svg>
+                  GeoJSON
+                </>
+              )}
             </button>
-            <button className="btn-export" disabled={!currentLayout}>
-              KMZ
+            <button 
+              className="btn-export" 
+              disabled={!currentLayout || exportingFormat !== null}
+              onClick={() => handleExport('kmz')}
+            >
+              {exportingFormat === 'kmz' ? (
+                <><span className="spinner-small" /> Exporting...</>
+              ) : (
+                <>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="16" height="16">
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="2" y1="12" x2="22" y2="12" />
+                    <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+                  </svg>
+                  KMZ
+                </>
+              )}
             </button>
-            <button className="btn-export" disabled={!currentLayout}>
-              PDF
+            <button 
+              className="btn-export" 
+              disabled={!currentLayout || exportingFormat !== null}
+              onClick={() => handleExport('pdf')}
+            >
+              {exportingFormat === 'pdf' ? (
+                <><span className="spinner-small" /> Exporting...</>
+              ) : (
+                <>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="16" height="16">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                    <polyline points="14 2 14 8 20 8" />
+                    <line x1="16" y1="13" x2="8" y2="13" />
+                    <line x1="16" y1="17" x2="8" y2="17" />
+                    <polyline points="10 9 9 9 8 9" />
+                  </svg>
+                  PDF Report
+                </>
+              )}
             </button>
           </div>
           {!currentLayout && (

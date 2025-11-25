@@ -321,6 +321,68 @@ resource "aws_s3_bucket_cors_configuration" "site_uploads" {
   }
 }
 
+# =============================================================================
+# S3 Lifecycle Policies (Phase C - C-06)
+# =============================================================================
+
+# Lifecycle policy for site uploads - delete files >90 days old
+resource "aws_s3_bucket_lifecycle_configuration" "site_uploads" {
+  bucket = aws_s3_bucket.site_uploads.id
+
+  rule {
+    id     = "delete-old-uploads"
+    status = "Enabled"
+
+    filter {
+      prefix = "" # Apply to all objects
+    }
+
+    # Delete current versions after 90 days
+    expiration {
+      days = 90
+    }
+
+    # Delete non-current versions after 30 days (versioned bucket)
+    noncurrent_version_expiration {
+      noncurrent_days = 30
+    }
+
+    # Transition to cheaper storage before deletion (optional cost optimization)
+    transition {
+      days          = 30
+      storage_class = "STANDARD_IA"
+    }
+  }
+
+  rule {
+    id     = "delete-terrain-cache"
+    status = "Enabled"
+
+    filter {
+      prefix = "terrain/" # Cached DEM files
+    }
+
+    # Delete terrain cache after 30 days
+    expiration {
+      days = 30
+    }
+  }
+
+  # Abort incomplete multipart uploads after 7 days
+  rule {
+    id     = "abort-incomplete-multipart"
+    status = "Enabled"
+
+    filter {
+      prefix = ""
+    }
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
+}
+
 # Site Outputs Bucket (private - stores generated layouts, exports)
 resource "aws_s3_bucket" "site_outputs" {
   bucket = "${var.project_prefix}-site-outputs"
@@ -364,6 +426,58 @@ resource "aws_s3_bucket_cors_configuration" "site_outputs" {
     allowed_methods = ["GET"]
     allowed_origins = ["*"] # Restrict in production
     max_age_seconds = 3000
+  }
+}
+
+# Lifecycle policy for site outputs - delete files >30 days old
+resource "aws_s3_bucket_lifecycle_configuration" "site_outputs" {
+  bucket = aws_s3_bucket.site_outputs.id
+
+  rule {
+    id     = "delete-old-outputs"
+    status = "Enabled"
+
+    filter {
+      prefix = "" # Apply to all objects
+    }
+
+    # Delete current versions after 30 days
+    expiration {
+      days = 30
+    }
+
+    # Delete non-current versions after 7 days (versioned bucket)
+    noncurrent_version_expiration {
+      noncurrent_days = 7
+    }
+  }
+
+  rule {
+    id     = "delete-temp-exports"
+    status = "Enabled"
+
+    filter {
+      prefix = "exports/" # Temporary export files
+    }
+
+    # Delete export files after 7 days (they're downloaded immediately)
+    expiration {
+      days = 7
+    }
+  }
+
+  # Abort incomplete multipart uploads after 1 day
+  rule {
+    id     = "abort-incomplete-multipart"
+    status = "Enabled"
+
+    filter {
+      prefix = ""
+    }
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 1
+    }
   }
 }
 
@@ -600,8 +714,15 @@ data "aws_ami" "amazon_linux_2023" {
   }
 }
 
+# =============================================================================
+# Bastion Host (Phase C - C-07: Conditional based on environment)
+# Set enable_bastion_access = false in production for better security
+# =============================================================================
+
 # IAM Role for SSM
 resource "aws_iam_role" "bastion_ssm" {
+  count = var.enable_bastion_access ? 1 : 0
+
   name = "${var.project_prefix}-bastion-ssm-role"
 
   assume_role_policy = jsonencode({
@@ -624,14 +745,18 @@ resource "aws_iam_role" "bastion_ssm" {
 
 # Attach SSM Managed Instance Core policy
 resource "aws_iam_role_policy_attachment" "bastion_ssm" {
-  role       = aws_iam_role.bastion_ssm.name
+  count = var.enable_bastion_access ? 1 : 0
+
+  role       = aws_iam_role.bastion_ssm[0].name
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
 # Instance Profile for Bastion
 resource "aws_iam_instance_profile" "bastion" {
+  count = var.enable_bastion_access ? 1 : 0
+
   name = "${var.project_prefix}-bastion-profile"
-  role = aws_iam_role.bastion_ssm.name
+  role = aws_iam_role.bastion_ssm[0].name
 
   tags = merge(local.common_tags, {
     Name = "${var.project_prefix}-bastion-profile"
@@ -640,6 +765,8 @@ resource "aws_iam_instance_profile" "bastion" {
 
 # Security Group for Bastion (SSM - no inbound needed)
 resource "aws_security_group" "bastion" {
+  count = var.enable_bastion_access ? 1 : 0
+
   name        = "${var.project_prefix}-bastion-sg"
   description = "Security group for SSM bastion host"
   vpc_id      = aws_vpc.main.id
@@ -661,22 +788,26 @@ resource "aws_security_group" "bastion" {
 
 # Add rule to RDS security group to allow bastion access
 resource "aws_security_group_rule" "rds_from_bastion" {
+  count = var.enable_bastion_access ? 1 : 0
+
   type                     = "ingress"
   from_port                = 5432
   to_port                  = 5432
   protocol                 = "tcp"
-  source_security_group_id = aws_security_group.bastion.id
+  source_security_group_id = aws_security_group.bastion[0].id
   security_group_id        = aws_security_group.rds.id
   description              = "PostgreSQL from Bastion"
 }
 
 # Bastion EC2 Instance
 resource "aws_instance" "bastion" {
+  count = var.enable_bastion_access ? 1 : 0
+
   ami                    = data.aws_ami.amazon_linux_2023.id
   instance_type          = "t3.micro"
   subnet_id              = aws_subnet.private[0].id
-  vpc_security_group_ids = [aws_security_group.bastion.id]
-  iam_instance_profile   = aws_iam_instance_profile.bastion.name
+  vpc_security_group_ids = [aws_security_group.bastion[0].id]
+  iam_instance_profile   = aws_iam_instance_profile.bastion[0].name
 
   # No key pair needed - using SSM Session Manager
   associate_public_ip_address = false
@@ -1072,12 +1203,15 @@ resource "aws_ecs_task_definition" "backend" {
       }
 
       healthCheck = {
-        command     = ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+        command     = ["CMD-SHELL", "curl -f http://localhost:8000/health/ready || exit 1"]
         interval    = 30
         timeout     = 5
         retries     = 3
         startPeriod = 60
       }
+      
+      # Phase C - C-09: Graceful shutdown timeout (60 seconds)
+      stopTimeout = 60
     }
   ])
 
@@ -1129,5 +1263,129 @@ resource "aws_ecs_service" "backend" {
 
   tags = merge(local.common_tags, {
     Name = "${var.project_prefix}-backend-service"
+  })
+}
+
+# =============================================================================
+# C-02: ECS Task Definition for SQS Worker
+# =============================================================================
+
+resource "aws_ecs_task_definition" "worker" {
+  family                   = "${var.project_prefix}-worker"
+  network_mode             = "awsvpc"
+  requires_compatibilities = ["FARGATE"]
+  cpu                      = var.ecs_task_cpu
+  memory                   = var.ecs_task_memory
+  execution_role_arn       = aws_iam_role.ecs_worker_execution.arn
+  task_role_arn            = aws_iam_role.ecs_worker_task.arn
+
+  container_definitions = jsonencode([
+    {
+      name      = "worker"
+      image     = "${aws_ecr_repository.backend.repository_url}:latest"
+      essential = true
+      
+      # Override default command to run worker instead of API
+      command = ["python", "-m", "app.worker"]
+
+      environment = [
+        {
+          name  = "AWS_REGION"
+          value = var.aws_region
+        },
+        {
+          name  = "COGNITO_USER_POOL_ID"
+          value = aws_cognito_user_pool.main.id
+        },
+        {
+          name  = "COGNITO_CLIENT_ID"
+          value = aws_cognito_user_pool_client.web.id
+        },
+        {
+          name  = "S3_UPLOADS_BUCKET"
+          value = aws_s3_bucket.site_uploads.id
+        },
+        {
+          name  = "S3_OUTPUTS_BUCKET"
+          value = aws_s3_bucket.site_outputs.id
+        },
+        {
+          name  = "SQS_QUEUE_URL"
+          value = aws_sqs_queue.layout_jobs.url
+        }
+      ]
+
+      secrets = [
+        {
+          name      = "DB_HOST"
+          valueFrom = "${aws_secretsmanager_secret.db_credentials.arn}:host::"
+        },
+        {
+          name      = "DB_PORT"
+          valueFrom = "${aws_secretsmanager_secret.db_credentials.arn}:port::"
+        },
+        {
+          name      = "DB_NAME"
+          valueFrom = "${aws_secretsmanager_secret.db_credentials.arn}:dbname::"
+        },
+        {
+          name      = "DB_USERNAME"
+          valueFrom = "${aws_secretsmanager_secret.db_credentials.arn}:username::"
+        },
+        {
+          name      = "DB_PASSWORD"
+          valueFrom = "${aws_secretsmanager_secret.db_credentials.arn}:password::"
+        }
+      ]
+
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          "awslogs-group"         = aws_cloudwatch_log_group.ecs_worker.name
+          "awslogs-region"        = var.aws_region
+          "awslogs-stream-prefix" = "worker"
+        }
+      }
+      
+      # Phase C - C-09: Graceful shutdown timeout (60 seconds)
+      # Worker handles SIGTERM to finish current job before exiting
+      stopTimeout = 60
+    }
+  ])
+
+  tags = merge(local.common_tags, {
+    Name = "${var.project_prefix}-worker-task"
+  })
+}
+
+# =============================================================================
+# C-02: ECS Service for Worker
+# =============================================================================
+
+resource "aws_ecs_service" "worker" {
+  name            = "${var.project_prefix}-worker"
+  cluster         = aws_ecs_cluster.main.id
+  task_definition = aws_ecs_task_definition.worker.arn
+  desired_count   = var.sqs_worker_desired_count
+  launch_type     = "FARGATE"
+
+  network_configuration {
+    subnets          = aws_subnet.private[*].id
+    security_groups  = [aws_security_group.ecs.id]
+    assign_public_ip = false
+  }
+
+  # Allow service to be deployed even if no container image exists yet
+  lifecycle {
+    ignore_changes = [task_definition]
+  }
+
+  depends_on = [
+    aws_iam_role_policy.ecs_worker_sqs,
+    aws_iam_role_policy.ecs_worker_s3
+  ]
+
+  tags = merge(local.common_tags, {
+    Name = "${var.project_prefix}-worker-service"
   })
 }

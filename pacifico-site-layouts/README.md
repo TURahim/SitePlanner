@@ -232,13 +232,51 @@ The application follows a three-phase MVP approach:
    - Frontend foundation: ✅ Complete (A-09, A-10, A-11, A-12, A-13, A-14)
    - Frontend deployment: ✅ Complete (A-15 - CloudFront CDN with HTTPS)
 
-2. **Phase B** — Real layout engine: Terrain-aware placement, routing, cut/fill
+2. **Phase B** — Real layout engine: Terrain-aware placement, routing, cut/fill ✅ **COMPLETE**
    - DEM fetching & caching, slope computation, asset placement algorithm, road routing, cut/fill
+   - Exports: GeoJSON, KMZ, PDF reports
+   - 22 unit tests validating all terrain-aware features
 
-3. **Phase C** — Async processing + production hardening
-   - SQS worker for async layout generation, monitoring, documentation
+3. **Phase C** — Async processing + production hardening ✅ **COMPLETE**
+   - ✅ SQS infrastructure with DLQ (C-01)
+   - ✅ Worker container for async processing (C-02)
+   - ✅ Async API endpoints with job queuing (C-03, C-04)
+   - ✅ Frontend polling for status (C-05)
+   - ✅ Lifecycle policies, security hardening, monitoring (C-06 to C-10)
 
 See `MVP_Task_List.md` in the project root for detailed task breakdown and progress tracking.
+
+## Phase C: Async Jobs + Hardening (10/10 tasks, 100% ✅)
+
+**Infrastructure Enhancements:**
+- ✅ **C-01**: SQS queue with DLQ (5-min visibility timeout, 3 max retries)
+- ✅ **C-02**: SQS worker service (async layout generation, idempotency, graceful shutdown)
+- ✅ **C-03**: Async `/api/layouts/generate` endpoint (enqueues jobs, returns immediately)
+- ✅ **C-04**: Status polling endpoint `/api/layouts/{id}/status` (ownership checks)
+- ✅ **C-05**: Frontend polling UI (custom hook, progress indicator, elapsed time)
+- ✅ **C-06**: S3 lifecycle policies (90-day uploads, 30-day outputs/terrain)
+- ✅ **C-07**: Security hardening (conditional bastion, least-privilege IAM)
+- ✅ **C-08**: CloudWatch monitoring (alarms, dashboard, SNS notifications)
+- ✅ **C-09**: Health checks & graceful shutdown (60-second stopTimeout)
+- ✅ **C-10**: Operational runbook documentation
+
+**New Features:**
+- Async layout generation with job queuing (SQS)
+- Frontend polling with progress indicators
+- S3 lifecycle policies for cost optimization
+- Enhanced monitoring with CloudWatch alarms
+- Production-ready health checks
+
+**Enable Async Mode:**
+```hcl
+# In infra/terraform/terraform.tfvars:
+# Enable async layout generation in API task definition
+backend_env_vars = {
+  ENABLE_ASYNC_LAYOUT_GENERATION = "true"
+}
+```
+
+---
 
 ## Current Progress
 
@@ -263,7 +301,7 @@ See `MVP_Task_List.md` in the project root for detailed task breakdown and progr
 - ✅ A-14: Layout generation button with asset markers and road display on map
 - ✅ A-15: CloudFront CDN with S3 OAC, HTTPS, SPA routing support
 
-**Phase B Backend In Progress (9/11 tasks, 82% ✅):**
+**Phase B Complete (11/11 tasks, 100% ✅):**
 
 **Terrain Pipeline & Processing:**
 - ✅ B-01: DEM fetching from USGS 3DEP with automatic TerrainCache caching
@@ -272,6 +310,7 @@ See `MVP_Task_List.md` in the project root for detailed task breakdown and progr
 
 **Asset & Road Placement:**
 - ✅ B-04: Terrain-aware asset placement with slope constraints per type
+- ✅ B-05: 22 comprehensive unit tests for placement algorithms (all passing)
 - ✅ B-06: Slope-weighted A* pathfinding for optimal road networks
 - ✅ B-07: Cut/fill volume calculations for earthwork estimation
 
@@ -279,10 +318,7 @@ See `MVP_Task_List.md` in the project root for detailed task breakdown and progr
 - ✅ B-08: GeoJSON export endpoint with full FeatureCollection
 - ✅ B-09: KMZ export for Google Earth with colored markers
 - ✅ B-10: PDF report generation with asset inventory and cut/fill summary
-
-**Remaining:**
-- ⏳ B-05: Unit tests for terrain-aware asset placement
-- ⏳ B-11: Frontend export UI (dropdown menu)
+- ✅ B-11: Frontend export UI with download buttons and loading states
 
 **Backend API Summary:**
 
@@ -312,10 +348,19 @@ See `MVP_Task_List.md` in the project root for detailed task breakdown and progr
 - **Terrain-Aware Layout Generator**: Intelligent asset placement respecting slope constraints
 - **Export Service**: Generates GeoJSON, KMZ, and PDF exports
 
-**Next Steps (Phase B Completion & Phase C):**
-1. **B-05** - Create unit test suite for asset placement algorithms
-2. **B-11** - Add export dropdown UI to frontend
-3. **Phase C** - Implement async job processing with SQS + worker tasks
+**Phase C Implementation (✅ Complete):**
+1. ✅ **C-01** - Set up SQS queue for layout generation jobs (completed)
+2. ✅ **C-02** - Create worker container to process layout jobs asynchronously (completed)
+3. ✅ **C-03** - Modify POST /api/layouts/generate to enqueue job (completed)
+4. ✅ **C-04** - Add GET /api/layouts/{id}/status endpoint for polling (completed)
+5. ✅ **C-05** - Implement polling on frontend for layout status (completed)
+6. ✅ **C-06 to C-10** - Security hardening & monitoring (completed)
+
+**Testing:**
+- ✅ All 22 backend tests passing in <1 second
+- ✅ ESLint validation passing
+- ✅ TypeScript compilation successful
+- ✅ Frontend production build passing
 
 ## License
 

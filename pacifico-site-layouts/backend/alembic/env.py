@@ -20,7 +20,8 @@ settings = get_settings()
 config = context.config
 
 # Override sqlalchemy.url with the application's database URL
-config.set_main_option("sqlalchemy.url", settings.database_url_sync)
+# Escape % characters for configparser interpolation
+config.set_main_option("sqlalchemy.url", settings.database_url_sync.replace("%", "%%"))
 
 # Interpret the config file for Python logging
 if config.config_file_name is not None:

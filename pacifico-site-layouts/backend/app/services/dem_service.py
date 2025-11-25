@@ -184,9 +184,12 @@ class DEMService:
         logger.info(f"Fetching 3DEP DEM for bbox: {bbox} at {resolution_m}m resolution")
         
         try:
+            import asyncio
+            
             # py3dep returns an xarray DataArray
             # Resolution options: 10 (1/3 arc-second) or 30 (1 arc-second)
-            dem_xarray = py3dep.get_dem(bbox, resolution=resolution_m)
+            # Run in thread pool to avoid blocking the async event loop
+            dem_xarray = await asyncio.to_thread(py3dep.get_dem, bbox, resolution=resolution_m)
             
             # Convert to numpy array
             dem_array = dem_xarray.values.astype(np.float32)

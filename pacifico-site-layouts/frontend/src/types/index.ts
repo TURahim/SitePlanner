@@ -114,6 +114,65 @@ export interface LayoutListResponse {
 export interface GenerateLayoutRequest {
   site_id: string;
   target_capacity_kw?: number;
+  use_terrain?: boolean;
+  dem_resolution_m?: number;
+}
+
+// =============================================================================
+// Phase C: Async Layout Generation Types
+// =============================================================================
+
+/**
+ * Response when async layout generation is enabled (C-03)
+ * Returns immediately with layout_id for polling
+ */
+export interface LayoutEnqueueResponse {
+  layout_id: string;
+  status: 'queued';
+  message: string;
+}
+
+/**
+ * Response from status polling endpoint (C-04)
+ */
+export interface LayoutStatusResponse {
+  layout_id: string;
+  status: LayoutStatus;
+  error_message?: string;
+  // Populated only when status is 'completed'
+  total_capacity_kw?: number;
+  asset_count?: number;
+  road_length_m?: number;
+  cut_volume_m3?: number;
+  fill_volume_m3?: number;
+}
+
+/**
+ * Union type for generate layout response
+ * Can be either sync (full response) or async (enqueue response)
+ */
+export type GenerateLayoutResponseUnion = LayoutGenerateResponse | LayoutEnqueueResponse;
+
+/**
+ * Type guard to check if response is async (enqueue response)
+ */
+export function isAsyncLayoutResponse(
+  response: GenerateLayoutResponseUnion
+): response is LayoutEnqueueResponse {
+  return 'message' in response && !('layout' in response);
+}
+
+// =============================================================================
+// Export Types
+// =============================================================================
+
+export type ExportFormat = 'geojson' | 'kmz' | 'pdf';
+
+export interface ExportResponse {
+  download_url: string;
+  format: ExportFormat;
+  filename: string;
+  expires_in_seconds: number;
 }
 
 // =============================================================================

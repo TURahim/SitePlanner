@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>Large Industrial Site</name>
+    <description>A larger test site for data center or industrial use</description>
+    <Style id="industrialStyle">
+      <LineStyle>
+        <color>ff00ff00</color>
+        <width>3</width>
+      </LineStyle>
+      <PolyStyle>
+        <color>4d00ff00</color>
+      </PolyStyle>
+    </Style>
+    <Placemark>
+      <name>Industrial Park Site</name>
+      <description>Approximately 200 acres near Phoenix, AZ</description>
+      <styleUrl>#industrialStyle</styleUrl>
+      <Polygon>
+        <outerBoundaryIs>
+          <LinearRing>
+            <coordinates>
+              -112.1000,33.4500,0
+              -112.0900,33.4500,0
+              -112.0850,33.4450,0
+              -112.0900,33.4350,0
+              -112.1000,33.4350,0
+              -112.1050,33.4400,0
+              -112.1050,33.4450,0
+              -112.1000,33.4500,0
+            </coordinates>
+          </LinearRing>
+        </outerBoundaryIs>
+      </Polygon>
+    </Placemark>
+  </Document>
+</kml>
+

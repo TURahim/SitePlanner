@@ -10,7 +10,8 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from geoalchemy2.functions import ST_Area, ST_AsGeoJSON, ST_GeomFromText, ST_SetSRID
-from sqlalchemy import select
+from sqlalchemy import cast, select
+from geoalchemy2 import Geography
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_user
@@ -102,9 +103,9 @@ async def upload_site(
     await db.flush()  # Get the ID
     
     # Calculate area in square meters using PostGIS
-    # ST_Area with geography cast gives area in square meters
+    # Cast geometry to geography to get area in square meters
     area_result = await db.execute(
-        select(ST_Area(Site.boundary.cast_to("geography"))).where(Site.id == site.id)
+        select(ST_Area(cast(Site.boundary, Geography))).where(Site.id == site.id)
     )
     area_m2 = area_result.scalar() or 0.0
     

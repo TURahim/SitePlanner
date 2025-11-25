@@ -100,7 +100,7 @@ async def get_jwks() -> CognitoJWKS:
 
 async def decode_token(
     token: str,
-    jwks: CognitoJWKS = Depends(get_jwks),
+    jwks: Optional[CognitoJWKS] = None,
 ) -> TokenPayload:
     """
     Decode and verify a Cognito JWT token.
@@ -115,6 +115,10 @@ async def decode_token(
     Raises:
         HTTPException: If token is invalid, expired, or verification fails
     """
+    # Use global JWKS instance if not provided
+    if jwks is None:
+        jwks = _jwks
+    
     # Check if Cognito is configured
     if not settings.cognito_user_pool_id or not settings.cognito_client_id:
         logger.warning("Cognito not configured, authentication disabled")

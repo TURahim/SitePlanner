@@ -3,6 +3,7 @@ Layout management API endpoints.
 
 Handles layout generation, retrieval, and listing.
 Supports both dummy placement (Phase A) and terrain-aware placement (Phase B).
+Supports async job queuing for layout generation (Phase C).
 """
 import json
 import logging
@@ -13,11 +14,12 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from geoalchemy2.functions import ST_AsGeoJSON, ST_GeomFromText, ST_Length, ST_SetSRID
 from shapely import wkt
 from shapely.geometry import mapping
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.api.auth import get_current_user
+from app.config import get_settings
 from app.database import get_db
 from app.models.asset import Asset
 from app.models.layout import Layout, LayoutStatus
@@ -28,9 +30,11 @@ from app.schemas.layout import (
     AssetResponse,
     GenerateLayoutRequest,
     LayoutDetailResponse,
+    LayoutEnqueueResponse,
     LayoutGenerateResponse,
     LayoutListResponse,
     LayoutResponse,
+    LayoutStatusResponse,
     RoadResponse,
 )
 # Phase A: Dummy layout generator
@@ -39,6 +43,8 @@ from app.services.layout_generator import DummyLayoutGenerator
 from app.services.dem_service import get_dem_service
 from app.services.slope_service import get_slope_service
 from app.services.terrain_layout_generator import TerrainAwareLayoutGenerator
+# Phase C: Async job queuing
+from app.services.sqs_service import get_sqs_service
 
 logger = logging.getLogger(__name__)
 
@@ -47,34 +53,37 @@ router = APIRouter(prefix="/api/layouts", tags=["Layouts"])
 
 @router.post(
     "/generate",
-    response_model=LayoutGenerateResponse,
+    response_model=LayoutGenerateResponse | LayoutEnqueueResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Generate layout",
-    description="Generate a layout for a site. Uses terrain-aware placement by default (Phase B).",
+    description="Generate a layout for a site. Uses terrain-aware placement by default (Phase B). Returns async job ID if enabled (Phase C).",
 )
 async def generate_layout(
     request: GenerateLayoutRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
-) -> LayoutGenerateResponse:
+) -> LayoutGenerateResponse | LayoutEnqueueResponse:
     """
     Generate a new layout for a site.
     
-    By default, uses terrain-aware placement (Phase B) which:
-    - Fetches DEM data from USGS 3DEP
-    - Computes slope raster
-    - Places assets respecting slope constraints
-    - Generates slope-optimized road routing
-    - Calculates cut/fill volumes
+    **Response type depends on configuration:**
     
-    Set use_terrain=False for dummy placement (Phase A fallback).
+    **Sync mode (default, Phase A/B):**
+    Returns full layout with assets and roads as GeoJSON immediately.
     
+    **Async mode (Phase C - enable with ENABLE_ASYNC_LAYOUT_GENERATION=true):**
+    Returns layout_id immediately, processing happens in worker. Poll with
+    GET /api/layouts/{layout_id}/status to check progress.
+    
+    **Layout Generation Methods:**
+    - Terrain-aware (default): Fetches DEM, computes slope, places assets respecting constraints
+    - Dummy (Phase A fallback): Use use_terrain=False for grid-based placement
+    
+    Parameters:
     - **site_id**: UUID of the site to generate layout for
     - **target_capacity_kw**: Target total capacity in kW (default: 1000)
-    - **use_terrain**: Use terrain-aware placement (default: True)
+    - **use_terrain**: Use terrain-aware placement (default: config-dependent)
     - **dem_resolution_m**: DEM resolution in meters (10 or 30)
-    
-    Returns the generated layout with assets and roads as GeoJSON.
     """
     # Load site with ownership check
     site_result = await db.execute(
@@ -89,6 +98,15 @@ async def generate_layout(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Site not found",
+        )
+    
+    # Phase C (C-03): If async mode enabled, enqueue job instead of processing
+    settings = get_settings()
+    if settings.enable_async_layout_generation:
+        return await _enqueue_layout_job(
+            request=request,
+            site=site,
+            db=db,
         )
     
     # Get site boundary as WKT for Shapely
@@ -144,6 +162,58 @@ async def generate_layout(
         )
     
     return result
+
+
+# =============================================================================
+# Phase C (C-03): Async Job Enqueueing
+# =============================================================================
+
+
+async def _enqueue_layout_job(
+    request: GenerateLayoutRequest,
+    site: Site,
+    db: AsyncSession,
+) -> LayoutEnqueueResponse:
+    """
+    Create layout record and enqueue job to SQS (C-03).
+    
+    Returns immediately with layout_id. Processing happens in worker.
+    """
+    # Create Layout record with status='queued'
+    layout = Layout(
+        site_id=site.id,
+        status=LayoutStatus.QUEUED.value,
+    )
+    db.add(layout)
+    await db.flush()  # Get the ID
+    await db.commit()
+    
+    # Enqueue job to SQS
+    sqs_service = get_sqs_service()
+    success = await sqs_service.send_layout_job(
+        layout_id=layout.id,
+        site_id=site.id,
+        target_capacity_kw=request.target_capacity_kw,
+        dem_resolution_m=request.dem_resolution_m,
+    )
+    
+    if not success:
+        # If SQS fails, mark layout as failed
+        layout.status = LayoutStatus.FAILED.value
+        layout.error_message = "Failed to enqueue layout generation job"
+        await db.commit()
+        
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to queue layout generation job",
+        )
+    
+    logger.info(f"Enqueued layout job: layout_id={layout.id}")
+    
+    return LayoutEnqueueResponse(
+        layout_id=layout.id,
+        status=LayoutStatus.QUEUED.value,
+    )
 
 
 async def _generate_terrain_aware_layout(
@@ -289,6 +359,9 @@ async def _generate_terrain_aware_layout(
         
         await db.commit()
         
+        # Refresh layout to get server-generated timestamps (created_at, updated_at)
+        await db.refresh(layout)
+        
         # Generate GeoJSON
         geojson = TerrainAwareLayoutGenerator.to_geojson_feature_collection(
             placed_assets,
@@ -421,6 +494,9 @@ async def _generate_dummy_layout(
     layout.total_capacity_kw = round(total_capacity, 1)
     
     await db.commit()
+    
+    # Refresh layout to get server-generated timestamps (created_at, updated_at)
+    await db.refresh(layout)
     
     # Generate GeoJSON
     geojson = DummyLayoutGenerator.to_geojson_feature_collection(
@@ -575,6 +651,84 @@ async def list_layouts(
             for layout in layouts
         ],
         total=len(layouts),
+    )
+
+
+# =============================================================================
+# Phase C: Async Layout Generation Endpoints
+# =============================================================================
+
+
+@router.get(
+    "/{layout_id}/status",
+    response_model=LayoutStatusResponse,
+    summary="Get layout status (polling)",
+    description="Poll for layout generation status. Used by frontend to track async jobs (C-04).",
+)
+async def get_layout_status(
+    layout_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> LayoutStatusResponse:
+    """
+    Get the current status of a layout generation job (C-04).
+    
+    Returns 404 if the layout doesn't exist or belongs to another user.
+    
+    Polling response includes:
+    - status: queued, processing, completed, or failed
+    - error_message: Details if status is 'failed'
+    - Metrics (when status='completed'): capacity, asset_count, road_length, volumes
+    
+    Used by frontend for async job tracking - call every 2-3 seconds during processing.
+    """
+    # Query layout with ownership check through site
+    result = await db.execute(
+        select(Layout)
+        .join(Site)
+        .where(
+            Layout.id == layout_id,
+            Site.owner_id == current_user.id,
+        )
+    )
+    layout = result.scalar_one_or_none()
+    
+    if not layout:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Layout not found",
+        )
+    
+    # If not completed, return minimal status
+    if layout.status != LayoutStatus.COMPLETED.value:
+        return LayoutStatusResponse(
+            layout_id=layout.id,
+            status=layout.status,
+            error_message=layout.error_message if layout.status == LayoutStatus.FAILED.value else None,
+        )
+    
+    # If completed, calculate additional metrics
+    # Count assets
+    asset_count_result = await db.execute(
+        select(func.count(Asset.id)).where(Asset.layout_id == layout.id)
+    )
+    asset_count = asset_count_result.scalar() or 0
+    
+    # Sum road lengths
+    road_length_result = await db.execute(
+        select(func.sum(Road.length_m)).where(Road.layout_id == layout.id)
+    )
+    total_road_length = road_length_result.scalar() or 0.0
+    
+    return LayoutStatusResponse(
+        layout_id=layout.id,
+        status=layout.status,
+        error_message=None,
+        total_capacity_kw=layout.total_capacity_kw,
+        asset_count=asset_count,
+        road_length_m=total_road_length,
+        cut_volume_m3=layout.cut_volume_m3,
+        fill_volume_m3=layout.fill_volume_m3,
     )
 
 

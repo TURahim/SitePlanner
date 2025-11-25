@@ -49,8 +49,9 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 async def check_db_connection() -> bool:
     """Check if database connection is healthy."""
     try:
+        from sqlalchemy import text
         async with async_session_maker() as session:
-            await session.execute("SELECT 1")
+            await session.execute(text("SELECT 1"))
             return True
     except Exception:
         return False

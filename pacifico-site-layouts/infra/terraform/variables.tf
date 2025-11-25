@@ -132,3 +132,42 @@ variable "ecs_desired_count" {
   type        = number
   default     = 1
 }
+
+# =============================================================================
+# SQS Configuration (Phase C)
+# =============================================================================
+
+variable "enable_sns_alarms" {
+  description = "Enable SNS topic for CloudWatch alarms"
+  type        = bool
+  default     = false
+}
+
+variable "alerts_email" {
+  description = "Email address for alarm notifications (leave empty to disable)"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "sqs_worker_desired_count" {
+  description = "Desired number of SQS worker tasks"
+  type        = number
+  default     = 1
+}
+
+# =============================================================================
+# Security Configuration (Phase C - C-07)
+# =============================================================================
+
+variable "enable_bastion_access" {
+  description = "Enable bastion host for RDS access (set to false in production)"
+  type        = bool
+  default     = true
+}
+
+variable "enable_deletion_protection" {
+  description = "Enable deletion protection for critical resources (RDS, ALB)"
+  type        = bool
+  default     = false  # Set to true in production
+}

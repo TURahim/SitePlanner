@@ -153,17 +153,17 @@ output "cognito_hosted_ui_url" {
 }
 
 # =============================================================================
-# Bastion Outputs
+# Bastion Outputs (Conditional - only when enable_bastion_access = true)
 # =============================================================================
 
 output "bastion_instance_id" {
   description = "Instance ID of the SSM bastion host (use with 'aws ssm start-session')"
-  value       = aws_instance.bastion.id
+  value       = var.enable_bastion_access ? aws_instance.bastion[0].id : null
 }
 
 output "bastion_security_group_id" {
   description = "Security group ID for bastion host"
-  value       = aws_security_group.bastion.id
+  value       = var.enable_bastion_access ? aws_security_group.bastion[0].id : null
 }
 
 # =============================================================================
@@ -248,5 +248,44 @@ output "ecs_task_execution_role_arn" {
 output "ecs_task_role_arn" {
   description = "ARN of the ECS task role"
   value       = aws_iam_role.ecs_task.arn
+}
+
+# =============================================================================
+# C-01: SQS Outputs
+# =============================================================================
+
+output "sqs_layout_jobs_queue_url" {
+  description = "URL of the SQS queue for layout generation jobs"
+  value       = aws_sqs_queue.layout_jobs.url
+}
+
+output "sqs_layout_jobs_queue_arn" {
+  description = "ARN of the SQS queue for layout generation jobs"
+  value       = aws_sqs_queue.layout_jobs.arn
+}
+
+output "sqs_layout_jobs_dlq_url" {
+  description = "URL of the SQS dead-letter queue"
+  value       = aws_sqs_queue.layout_jobs_dlq.url
+}
+
+output "sqs_layout_jobs_dlq_arn" {
+  description = "ARN of the SQS dead-letter queue"
+  value       = aws_sqs_queue.layout_jobs_dlq.arn
+}
+
+output "ecs_worker_task_role_arn" {
+  description = "ARN of the ECS worker task role"
+  value       = aws_iam_role.ecs_worker_task.arn
+}
+
+output "ecs_worker_execution_role_arn" {
+  description = "ARN of the ECS worker task execution role"
+  value       = aws_iam_role.ecs_worker_execution.arn
+}
+
+output "ecs_worker_log_group_name" {
+  description = "Name of the CloudWatch log group for worker tasks"
+  value       = aws_cloudwatch_log_group.ecs_worker.name
 }
 

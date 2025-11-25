@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>Sample Solar Site</name>
+    <description>A test site boundary for Pacifico Site Layouts</description>
+    <Style id="siteStyle">
+      <LineStyle>
+        <color>ff0000ff</color>
+        <width>2</width>
+      </LineStyle>
+      <PolyStyle>
+        <color>4d0000ff</color>
+      </PolyStyle>
+    </Style>
+    <Placemark>
+      <name>Test Solar Farm Site</name>
+      <description>Approximately 50 acres in West Texas</description>
+      <styleUrl>#siteStyle</styleUrl>
+      <Polygon>
+        <outerBoundaryIs>
+          <LinearRing>
+            <coordinates>
+              -101.8500,35.2000,0
+              -101.8450,35.2000,0
+              -101.8450,35.1950,0
+              -101.8500,35.1950,0
+              -101.8500,35.2000,0
+            </coordinates>
+          </LinearRing>
+        </outerBoundaryIs>
+      </Polygon>
+    </Placemark>
+  </Document>
+</kml>
+

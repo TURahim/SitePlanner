@@ -52,37 +52,55 @@ app = FastAPI(
 )
 
 # =============================================================================
-# CORS Middleware
+# CORS Middleware (must be added early, before routes)
 # =============================================================================
+# Handles preflight OPTIONS requests automatically.
+# Allowed origins are configured in app/config.py via CORS_ORIGINS env var.
+# TODO: Add production frontend URLs to CORS_ORIGINS (e.g., CloudFront URL)
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 # =============================================================================
-# Exception Handlers
+# Exception Handlers (with CORS headers for cross-origin error responses)
 # =============================================================================
+
+
+def _get_cors_headers(request: Request) -> dict[str, str]:
+    """Get CORS headers based on request origin."""
+    origin = request.headers.get("origin", "")
+    if origin in settings.cors_origins:
+        return {
+            "Access-Control-Allow-Origin": origin,
+            "Access-Control-Allow-Credentials": "true",
+            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS, PATCH",
+            "Access-Control-Allow-Headers": "*",
+        }
+    return {}
 
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
-    """Handle HTTP exceptions with consistent JSON response."""
+    """Handle HTTP exceptions with consistent JSON response and CORS headers."""
     return JSONResponse(
         status_code=exc.status_code,
         content={
             "error": exc.detail,
             "status_code": exc.status_code,
         },
+        headers=_get_cors_headers(request),
     )
 
 
 @app.exception_handler(Exception)
 async def general_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    """Handle unexpected exceptions."""
+    """Handle unexpected exceptions with CORS headers."""
     logger.exception(f"Unexpected error: {exc}")
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -90,20 +108,22 @@ async def general_exception_handler(request: Request, exc: Exception) -> JSONRes
             "error": "Internal server error",
             "status_code": 500,
         },
+        headers=_get_cors_headers(request),
     )
 
 
 # =============================================================================
-# Health Check Endpoints
+# Health Check Endpoints (Phase C - C-09: Enhanced health checks)
 # =============================================================================
 
 
 @app.get("/health", tags=["Health"])
 async def health() -> dict[str, str]:
     """
-    Basic health check endpoint.
+    Basic liveness check endpoint.
     
     Returns 200 OK if the service is running.
+    Used by ECS/ALB for basic liveness probes.
     """
     return {"status": "ok"}
 
@@ -115,6 +135,9 @@ async def health_ready() -> dict[str, Any]:
     
     Returns 200 if the service is ready to handle requests.
     Returns 503 if the database is not accessible.
+    
+    Used by ECS/ALB for readiness probes to determine if the
+    container should receive traffic.
     """
     db_healthy = await check_db_connection()
     
@@ -128,6 +151,76 @@ async def health_ready() -> dict[str, Any]:
         "status": "ready",
         "database": "connected",
     }
+
+
+@app.get("/health/live", tags=["Health"])
+async def health_live() -> dict[str, Any]:
+    """
+    Comprehensive health check for monitoring systems.
+    
+    Returns detailed status of all dependencies:
+    - Database connectivity
+    - SQS queue status (if async enabled)
+    - Memory/resource usage
+    
+    Always returns 200 with status details for monitoring dashboards.
+    """
+    import os
+    import psutil
+    
+    health_status: dict[str, Any] = {
+        "status": "ok",
+        "version": "0.1.0",
+        "checks": {},
+    }
+    
+    # Database check
+    try:
+        db_healthy = await check_db_connection()
+        health_status["checks"]["database"] = {
+            "status": "healthy" if db_healthy else "unhealthy",
+            "message": "Connection successful" if db_healthy else "Connection failed",
+        }
+    except Exception as e:
+        health_status["checks"]["database"] = {
+            "status": "unhealthy",
+            "message": str(e),
+        }
+        health_status["status"] = "degraded"
+    
+    # SQS check (if async enabled)
+    if settings.enable_async_layout_generation and settings.sqs_queue_url:
+        try:
+            from app.services.sqs_service import get_sqs_service
+            sqs = get_sqs_service()
+            attrs = await sqs.get_queue_attributes()
+            health_status["checks"]["sqs"] = {
+                "status": "healthy",
+                "queue_depth": attrs.get("ApproximateNumberOfMessages", "unknown"),
+            }
+        except Exception as e:
+            health_status["checks"]["sqs"] = {
+                "status": "unhealthy",
+                "message": str(e),
+            }
+            health_status["status"] = "degraded"
+    
+    # System resources
+    try:
+        process = psutil.Process(os.getpid())
+        memory_info = process.memory_info()
+        health_status["checks"]["resources"] = {
+            "status": "healthy",
+            "memory_mb": round(memory_info.rss / 1024 / 1024, 2),
+            "cpu_percent": process.cpu_percent(),
+        }
+    except Exception:
+        health_status["checks"]["resources"] = {
+            "status": "unknown",
+            "message": "Could not retrieve resource info",
+        }
+    
+    return health_status
 
 
 # =============================================================================
