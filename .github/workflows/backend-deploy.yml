@@ -1,0 +1,130 @@
+# =============================================================================
+# Backend CI/CD Pipeline - Pacifico Site Layouts
+# =============================================================================
+# Triggered on push to main branch when backend files change
+# Builds Docker image, pushes to ECR, updates ECS service
+# =============================================================================
+
+name: Backend Deploy
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'pacifico-site-layouts/backend/**'
+      - '.github/workflows/backend-deploy.yml'
+  workflow_dispatch:  # Allow manual trigger
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: pacifico-layouts-dev-backend
+  ECS_CLUSTER: pacifico-layouts-dev-cluster
+  ECS_SERVICE: pacifico-layouts-dev-backend
+  CONTAINER_NAME: backend
+
+jobs:
+  deploy:
+    name: Build and Deploy Backend
+    runs-on: ubuntu-latest
+    
+    # Required for OIDC authentication with AWS
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      # =======================================================================
+      # Checkout and Setup
+      # =======================================================================
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # =======================================================================
+      # Build and Push Docker Image
+      # =======================================================================
+      - name: Build, tag, and push Docker image
+        id: build-image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        working-directory: pacifico-site-layouts/backend
+        run: |
+          # Build Docker image for linux/amd64 (ECS Fargate requirement)
+          docker build \
+            --platform linux/amd64 \
+            -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
+            -t $ECR_REGISTRY/$ECR_REPOSITORY:latest \
+            .
+          
+          # Push both tags to ECR
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          
+          # Output image URI for ECS deployment
+          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+      # =======================================================================
+      # Deploy to ECS
+      # =======================================================================
+      - name: Download current task definition
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition $ECS_SERVICE \
+            --query taskDefinition \
+            > task-definition.json
+
+      - name: Update task definition with new image
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name: ${{ env.CONTAINER_NAME }}
+          image: ${{ steps.build-image.outputs.image }}
+
+      - name: Deploy to Amazon ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.task-def.outputs.task-definition }}
+          service: ${{ env.ECS_SERVICE }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: true
+
+      # =======================================================================
+      # Verification
+      # =======================================================================
+      - name: Verify deployment
+        run: |
+          echo "✅ Deployment complete!"
+          echo "Image: ${{ steps.build-image.outputs.image }}"
+          
+          # Get ALB DNS name
+          ALB_DNS=$(aws elbv2 describe-load-balancers \
+            --names pacifico-layouts-dev-alb \
+            --query 'LoadBalancers[0].DNSName' \
+            --output text 2>/dev/null || echo "")
+          
+          if [ -n "$ALB_DNS" ]; then
+            echo "Backend URL: http://$ALB_DNS"
+            
+            # Wait a moment for the new task to be fully registered
+            sleep 10
+            
+            # Test health endpoint
+            if curl -sf "http://$ALB_DNS/health" > /dev/null; then
+              echo "✅ Health check passed!"
+            else
+              echo "⚠️ Health check failed or service still stabilizing"
+            fi
+          fi
+

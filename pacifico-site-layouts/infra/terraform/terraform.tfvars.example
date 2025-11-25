@@ -1,0 +1,50 @@
+# =============================================================================
+# Terraform Variables - Example Configuration
+# =============================================================================
+# Copy this file to terraform.tfvars and fill in your values.
+# IMPORTANT: Never commit terraform.tfvars to version control!
+# =============================================================================
+
+# Core Configuration
+aws_region     = "us-east-1"
+project_prefix = "pacifico-layouts-dev"
+environment    = "dev"
+
+# VPC Configuration (defaults are usually fine)
+# vpc_cidr             = "10.0.0.0/16"
+# availability_zones   = ["us-east-1a", "us-east-1b"]
+# public_subnet_cidrs  = ["10.0.1.0/24", "10.0.2.0/24"]
+# private_subnet_cidrs = ["10.0.10.0/24", "10.0.11.0/24"]
+
+# RDS Configuration
+db_instance_class = "db.t3.micro"
+db_name           = "pacifico_layouts"
+db_username       = "pacifico_admin"
+db_password       = "CHANGE_ME_TO_A_STRONG_PASSWORD" # Use a strong password!
+
+# Optional: Increase storage if needed
+# db_allocated_storage     = 20
+# db_max_allocated_storage = 100
+
+# Cognito Configuration (defaults are usually fine)
+# cognito_password_min_length          = 8
+# cognito_email_verification_subject   = "Pacifico Site Layouts - Verify your email"
+# cognito_email_verification_message   = "Your verification code is {####}"
+
+# ECS Configuration (defaults are fine for MVP)
+# ecs_task_cpu     = 256
+# ecs_task_memory  = 512
+# ecs_desired_count = 1
+
+# =============================================================================
+# A-03: GitHub Actions CI/CD Configuration
+# =============================================================================
+# Uncomment and set these to enable GitHub Actions OIDC authentication.
+# This creates an IAM role that GitHub Actions can assume for deployments.
+#
+# github_org  = "your-github-username-or-org"
+# github_repo = "your-repo-name"
+#
+# Example for a repo at https://github.com/mycompany/pacifico:
+# github_org  = "mycompany"
+# github_repo = "pacifico"

@@ -1,0 +1,131 @@
+# =============================================================================
+# Frontend CI/CD Pipeline - Pacifico Site Layouts
+# =============================================================================
+# Triggered on push to main branch when frontend files change
+# Builds React app, syncs to S3, invalidates CloudFront cache
+# =============================================================================
+
+name: Frontend Deploy
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'pacifico-site-layouts/frontend/**'
+      - '.github/workflows/frontend-deploy.yml'
+  workflow_dispatch:  # Allow manual trigger
+
+env:
+  AWS_REGION: us-east-1
+  S3_BUCKET: pacifico-layouts-dev-frontend-assets
+  NODE_VERSION: '18'
+  # Uncomment when CloudFront is configured (A-15)
+  # CLOUDFRONT_DISTRIBUTION_ID: ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }}
+
+jobs:
+  deploy:
+    name: Build and Deploy Frontend
+    runs-on: ubuntu-latest
+    
+    # Required for OIDC authentication with AWS
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      # =======================================================================
+      # Checkout and Setup
+      # =======================================================================
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: pacifico-site-layouts/frontend/package-lock.json
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # =======================================================================
+      # Build Frontend
+      # =======================================================================
+      - name: Install dependencies
+        working-directory: pacifico-site-layouts/frontend
+        run: npm ci
+
+      - name: Run linter
+        working-directory: pacifico-site-layouts/frontend
+        run: npm run lint
+
+      - name: Build production bundle
+        working-directory: pacifico-site-layouts/frontend
+        env:
+          # Add environment variables for the build
+          VITE_API_URL: ${{ secrets.VITE_API_URL }}
+          VITE_COGNITO_USER_POOL_ID: ${{ secrets.VITE_COGNITO_USER_POOL_ID }}
+          VITE_COGNITO_CLIENT_ID: ${{ secrets.VITE_COGNITO_CLIENT_ID }}
+          VITE_AWS_REGION: ${{ env.AWS_REGION }}
+        run: npm run build
+
+      # =======================================================================
+      # Deploy to S3
+      # =======================================================================
+      - name: Sync to S3
+        working-directory: pacifico-site-layouts/frontend
+        run: |
+          # Sync built files to S3 bucket
+          aws s3 sync dist/ s3://$S3_BUCKET \
+            --delete \
+            --cache-control "public, max-age=31536000, immutable" \
+            --exclude "index.html" \
+            --exclude "*.json"
+          
+          # Upload index.html and JSON with no-cache headers (for proper SPA routing)
+          aws s3 cp dist/index.html s3://$S3_BUCKET/index.html \
+            --cache-control "no-cache, no-store, must-revalidate"
+          
+          # Upload any JSON files (like manifest) with short cache
+          if ls dist/*.json 1> /dev/null 2>&1; then
+            for file in dist/*.json; do
+              aws s3 cp "$file" "s3://$S3_BUCKET/$(basename $file)" \
+                --cache-control "no-cache, no-store, must-revalidate"
+            done
+          fi
+
+      # =======================================================================
+      # CloudFront Invalidation (Uncomment when A-15 is complete)
+      # =======================================================================
+      # - name: Invalidate CloudFront cache
+      #   if: env.CLOUDFRONT_DISTRIBUTION_ID != ''
+      #   run: |
+      #     aws cloudfront create-invalidation \
+      #       --distribution-id $CLOUDFRONT_DISTRIBUTION_ID \
+      #       --paths "/*"
+
+      # =======================================================================
+      # Verification
+      # =======================================================================
+      - name: Verify deployment
+        run: |
+          echo "✅ Frontend deployment complete!"
+          echo "S3 Bucket: s3://$S3_BUCKET"
+          
+          # Get the S3 website URL
+          WEBSITE_URL="http://${S3_BUCKET}.s3-website-${AWS_REGION}.amazonaws.com"
+          echo "Website URL: $WEBSITE_URL"
+          
+          # Test if index.html exists
+          if aws s3 ls "s3://$S3_BUCKET/index.html" > /dev/null 2>&1; then
+            echo "✅ index.html uploaded successfully"
+          else
+            echo "❌ index.html not found in bucket"
+            exit 1
+          fi
+
