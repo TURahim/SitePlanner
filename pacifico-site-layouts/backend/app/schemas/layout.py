@@ -18,6 +18,16 @@ class GenerateLayoutRequest(BaseModel):
         le=100000,
         description="Target total capacity in kW",
     )
+    use_terrain: bool = Field(
+        default=True,
+        description="Use terrain-aware placement (Phase B). Set False for dummy placement.",
+    )
+    dem_resolution_m: int = Field(
+        default=10,
+        ge=10,
+        le=30,
+        description="DEM resolution in meters (10 or 30). Only used if use_terrain=True.",
+    )
 
 
 class AssetResponse(BaseModel):
@@ -28,6 +38,8 @@ class AssetResponse(BaseModel):
     name: Optional[str] = None
     capacity_kw: Optional[float] = None
     position: dict[str, Any] = Field(..., description="Position as GeoJSON Point")
+    elevation_m: Optional[float] = Field(None, description="Ground elevation in meters")
+    slope_deg: Optional[float] = Field(None, description="Terrain slope in degrees")
     
     class Config:
         from_attributes = True
@@ -40,6 +52,7 @@ class RoadResponse(BaseModel):
     name: Optional[str] = None
     length_m: Optional[float] = None
     geometry: dict[str, Any] = Field(..., description="Geometry as GeoJSON LineString")
+    max_grade_pct: Optional[float] = Field(None, description="Maximum grade along road (%)")
     
     class Config:
         from_attributes = True

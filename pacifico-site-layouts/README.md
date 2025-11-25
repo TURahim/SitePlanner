@@ -242,7 +242,7 @@ See `MVP_Task_List.md` in the project root for detailed task breakdown and progr
 
 ## Current Progress
 
-**Completed (Phase A: 15/15 tasks, 100% ✅):**
+**Phase A Completed (15/15 tasks, 100% ✅):**
 
 **Infrastructure & Backend (9 tasks):**
 - ✅ A-01: Infrastructure foundation (VPC, RDS, S3, Cognito, ECR, ALB, Bastion)
@@ -263,23 +263,59 @@ See `MVP_Task_List.md` in the project root for detailed task breakdown and progr
 - ✅ A-14: Layout generation button with asset markers and road display on map
 - ✅ A-15: CloudFront CDN with S3 OAC, HTTPS, SPA routing support
 
+**Phase B Backend In Progress (9/11 tasks, 82% ✅):**
+
+**Terrain Pipeline & Processing:**
+- ✅ B-01: DEM fetching from USGS 3DEP with automatic TerrainCache caching
+- ✅ B-02: Slope computation from DEM using NumPy gradient method
+- ✅ B-03: Integrated terrain processing into layout generation workflow
+
+**Asset & Road Placement:**
+- ✅ B-04: Terrain-aware asset placement with slope constraints per type
+- ✅ B-06: Slope-weighted A* pathfinding for optimal road networks
+- ✅ B-07: Cut/fill volume calculations for earthwork estimation
+
+**Export Functionality:**
+- ✅ B-08: GeoJSON export endpoint with full FeatureCollection
+- ✅ B-09: KMZ export for Google Earth with colored markers
+- ✅ B-10: PDF report generation with asset inventory and cut/fill summary
+
+**Remaining:**
+- ⏳ B-05: Unit tests for terrain-aware asset placement
+- ⏳ B-11: Frontend export UI (dropdown menu)
+
 **Backend API Summary:**
+
+*Phase A (Complete):*
 - **Sites API**: POST/GET /api/sites, GET /api/sites/{id}, DELETE /api/sites/{id}, POST /api/sites/upload
 - **Layouts API**: POST/GET /api/layouts, GET /api/layouts/{id}, DELETE /api/layouts/{id}
 - **Auth API**: GET /api/me (get current user)
 - **Health**: GET /health, GET /health/ready (with DB connectivity check)
 
-**Frontend Features:**
+*Phase B (New):*
+- **Layout Generation**: Enhanced POST /api/layouts/generate with terrain-aware placement (default)
+- **Exports API**: 
+  - GET /api/layouts/{id}/export/geojson (GeoJSON FeatureCollection)
+  - GET /api/layouts/{id}/export/kmz (Google Earth KMZ)
+  - GET /api/layouts/{id}/export/pdf (Professional PDF report)
+
+**Frontend Features (Phase A):**
 - Complete authentication flow with Cognito and email verification
 - Sites dashboard with upload, delete, and navigation
 - Interactive map display of site boundaries and generated layouts
 - Asset placement visualization with type-based color coding
 - Road network display
 
-**Next Steps (Phase B - Real Layout Engine):**
-1. **B-01** - Implement DEM fetching for site bounding box (terrain data)
-2. **B-02** - Compute slope raster from DEM using GDAL/Rasterio
-3. **B-04** - Implement heuristic asset placement algorithm with terrain awareness
+**Backend Services (Phase B):**
+- **DEM Service**: Fetches elevation data from USGS 3DEP with automatic caching
+- **Slope Service**: Computes slope rasters from DEM using NumPy
+- **Terrain-Aware Layout Generator**: Intelligent asset placement respecting slope constraints
+- **Export Service**: Generates GeoJSON, KMZ, and PDF exports
+
+**Next Steps (Phase B Completion & Phase C):**
+1. **B-05** - Create unit test suite for asset placement algorithms
+2. **B-11** - Add export dropdown UI to frontend
+3. **Phase C** - Implement async job processing with SQS + worker tasks
 
 ## License
 

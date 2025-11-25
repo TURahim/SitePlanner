@@ -49,6 +49,12 @@ class Road(Base, UUIDMixin, TimestampMixin):
         default=5.0,
     )
     
+    # Maximum grade along road (percent)
+    max_grade_pct: Mapped[Optional[float]] = mapped_column(
+        Float,
+        nullable=True,
+    )
+    
     # Layout relationship
     layout_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),

@@ -2,6 +2,7 @@
 Layout management API endpoints.
 
 Handles layout generation, retrieval, and listing.
+Supports both dummy placement (Phase A) and terrain-aware placement (Phase B).
 """
 import json
 import logging
@@ -32,7 +33,12 @@ from app.schemas.layout import (
     LayoutResponse,
     RoadResponse,
 )
+# Phase A: Dummy layout generator
 from app.services.layout_generator import DummyLayoutGenerator
+# Phase B: Terrain-aware services
+from app.services.dem_service import get_dem_service
+from app.services.slope_service import get_slope_service
+from app.services.terrain_layout_generator import TerrainAwareLayoutGenerator
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +50,7 @@ router = APIRouter(prefix="/api/layouts", tags=["Layouts"])
     response_model=LayoutGenerateResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Generate layout",
-    description="Generate a new layout with dummy asset placement for a site.",
+    description="Generate a layout for a site. Uses terrain-aware placement by default (Phase B).",
 )
 async def generate_layout(
     request: GenerateLayoutRequest,
@@ -54,11 +60,19 @@ async def generate_layout(
     """
     Generate a new layout for a site.
     
-    For Phase A, this creates dummy assets placed in a grid pattern
-    within the site boundary. Phase B will implement terrain-aware placement.
+    By default, uses terrain-aware placement (Phase B) which:
+    - Fetches DEM data from USGS 3DEP
+    - Computes slope raster
+    - Places assets respecting slope constraints
+    - Generates slope-optimized road routing
+    - Calculates cut/fill volumes
+    
+    Set use_terrain=False for dummy placement (Phase A fallback).
     
     - **site_id**: UUID of the site to generate layout for
     - **target_capacity_kw**: Target total capacity in kW (default: 1000)
+    - **use_terrain**: Use terrain-aware placement (default: True)
+    - **dem_resolution_m**: DEM resolution in meters (10 or 30)
     
     Returns the generated layout with assets and roads as GeoJSON.
     """
@@ -102,21 +116,212 @@ async def generate_layout(
     # Create Layout record
     layout = Layout(
         site_id=site.id,
-        status=LayoutStatus.COMPLETED.value,  # Synchronous for Phase A
+        status=LayoutStatus.PROCESSING.value,
     )
     db.add(layout)
     await db.flush()  # Get the ID
     
-    # Generate dummy layout
-    generator = DummyLayoutGenerator(target_capacity_kw=request.target_capacity_kw)
+    num_assets = random_asset_count(request.target_capacity_kw)
+    
+    # Choose generation method based on use_terrain flag
+    if request.use_terrain:
+        result = await _generate_terrain_aware_layout(
+            layout=layout,
+            site=site,
+            boundary=boundary,
+            target_capacity_kw=request.target_capacity_kw,
+            dem_resolution_m=request.dem_resolution_m,
+            num_assets=num_assets,
+            db=db,
+        )
+    else:
+        result = await _generate_dummy_layout(
+            layout=layout,
+            boundary=boundary,
+            target_capacity_kw=request.target_capacity_kw,
+            num_assets=num_assets,
+            db=db,
+        )
+    
+    return result
+
+
+async def _generate_terrain_aware_layout(
+    layout: Layout,
+    site: Site,
+    boundary,
+    target_capacity_kw: float,
+    dem_resolution_m: int,
+    num_assets: int,
+    db: AsyncSession,
+) -> LayoutGenerateResponse:
+    """Generate layout using terrain-aware placement (Phase B)."""
+    
+    dem_service = get_dem_service()
+    slope_service = get_slope_service()
     
     try:
-        placed_assets, placed_roads = generator.generate(
+        # Step 1: Fetch DEM
+        logger.info(f"Fetching DEM for site {site.id} at {dem_resolution_m}m resolution")
+        dem_s3_key = await dem_service.get_dem_for_site(
+            site_id=site.id,
             boundary=boundary,
-            num_assets=random_asset_count(request.target_capacity_kw),
+            db=db,
+            resolution_m=dem_resolution_m,
         )
+        
+        if not dem_s3_key:
+            # Fall back to dummy placement if DEM unavailable
+            logger.warning(f"DEM unavailable for site {site.id}, falling back to dummy placement")
+            return await _generate_dummy_layout(
+                layout=layout,
+                boundary=boundary,
+                target_capacity_kw=target_capacity_kw,
+                num_assets=num_assets,
+                db=db,
+            )
+        
+        # Step 2: Compute slope
+        logger.info(f"Computing slope for site {site.id}")
+        slope_s3_key = await slope_service.get_slope_for_site(
+            site_id=site.id,
+            dem_s3_key=dem_s3_key,
+            db=db,
+        )
+        
+        if not slope_s3_key:
+            logger.warning(f"Slope computation failed for site {site.id}, falling back to dummy")
+            return await _generate_dummy_layout(
+                layout=layout,
+                boundary=boundary,
+                target_capacity_kw=target_capacity_kw,
+                num_assets=num_assets,
+                db=db,
+            )
+        
+        # Step 3: Load raster data
+        dem_array, dem_profile = await dem_service.get_dem_array(dem_s3_key)
+        slope_array, slope_profile = await slope_service.get_slope_array(slope_s3_key)
+        
+        # Step 4: Generate terrain-aware layout
+        logger.info(f"Generating terrain-aware layout for site {site.id}")
+        generator = TerrainAwareLayoutGenerator(target_capacity_kw=target_capacity_kw)
+        
+        placed_assets, placed_roads, cut_fill = generator.generate(
+            boundary=boundary,
+            dem_array=dem_array,
+            slope_array=slope_array,
+            transform=dem_profile["transform"],
+            num_assets=num_assets,
+        )
+        
+        # Update layout with terrain flag and cut/fill
+        layout.terrain_processed = True
+        layout.cut_volume_m3 = cut_fill.cut_volume_m3
+        layout.fill_volume_m3 = cut_fill.fill_volume_m3
+        layout.status = LayoutStatus.COMPLETED.value
+        
+        # Create Asset records with terrain data
+        total_capacity = 0.0
+        asset_responses = []
+        
+        for placed in placed_assets:
+            asset = Asset(
+                layout_id=layout.id,
+                asset_type=placed.asset_type,
+                name=placed.name,
+                position=ST_SetSRID(
+                    ST_GeomFromText(placed.position.wkt),
+                    4326
+                ),
+                capacity_kw=placed.capacity_kw,
+                elevation_m=placed.elevation_m,
+                slope_deg=placed.slope_deg,
+                footprint_length_m=placed.footprint_length_m,
+                footprint_width_m=placed.footprint_width_m,
+            )
+            db.add(asset)
+            await db.flush()
+            
+            total_capacity += placed.capacity_kw or 0
+            
+            asset_responses.append(AssetResponse(
+                id=asset.id,
+                asset_type=asset.asset_type,
+                name=asset.name,
+                capacity_kw=asset.capacity_kw,
+                elevation_m=asset.elevation_m,
+                slope_deg=asset.slope_deg,
+                position=mapping(placed.position),
+            ))
+        
+        # Create Road records with grade data
+        road_responses = []
+        total_road_length = 0.0
+        
+        for placed in placed_roads:
+            road = Road(
+                layout_id=layout.id,
+                name=placed.name,
+                geometry=ST_SetSRID(
+                    ST_GeomFromText(placed.geometry.wkt),
+                    4326
+                ),
+                length_m=placed.length_m,
+                width_m=placed.width_m,
+                max_grade_pct=placed.max_grade_pct,
+            )
+            db.add(road)
+            await db.flush()
+            
+            total_road_length += placed.length_m or 0
+            
+            road_responses.append(RoadResponse(
+                id=road.id,
+                name=road.name,
+                length_m=road.length_m,
+                max_grade_pct=road.max_grade_pct,
+                geometry=mapping(placed.geometry),
+            ))
+        
+        # Update layout with totals
+        layout.total_capacity_kw = round(total_capacity, 1)
+        
+        await db.commit()
+        
+        # Generate GeoJSON
+        geojson = TerrainAwareLayoutGenerator.to_geojson_feature_collection(
+            placed_assets,
+            placed_roads,
+            cut_fill,
+        )
+        
+        logger.info(
+            f"Generated terrain-aware layout {layout.id} for site {site.id}: "
+            f"{len(asset_responses)} assets, {len(road_responses)} roads, "
+            f"{total_capacity:.1f} kW, cut={cut_fill.cut_volume_m3:.0f}m³, "
+            f"fill={cut_fill.fill_volume_m3:.0f}m³"
+        )
+        
+        return LayoutGenerateResponse(
+            layout=LayoutResponse(
+                id=layout.id,
+                site_id=layout.site_id,
+                status=layout.status,
+                total_capacity_kw=layout.total_capacity_kw,
+                cut_volume_m3=layout.cut_volume_m3,
+                fill_volume_m3=layout.fill_volume_m3,
+                error_message=layout.error_message,
+                created_at=layout.created_at,
+                updated_at=layout.updated_at,
+            ),
+            assets=asset_responses,
+            roads=road_responses,
+            geojson=geojson,
+        )
+        
     except Exception as e:
-        logger.exception(f"Layout generation failed: {e}")
+        logger.exception(f"Terrain-aware layout generation failed: {e}")
         layout.status = LayoutStatus.FAILED.value
         layout.error_message = str(e)
         await db.commit()
@@ -124,6 +329,36 @@ async def generate_layout(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Layout generation failed: {e}",
         )
+
+
+async def _generate_dummy_layout(
+    layout: Layout,
+    boundary,
+    target_capacity_kw: float,
+    num_assets: int,
+    db: AsyncSession,
+) -> LayoutGenerateResponse:
+    """Generate layout using dummy placement (Phase A fallback)."""
+    
+    generator = DummyLayoutGenerator(target_capacity_kw=target_capacity_kw)
+    
+    try:
+        placed_assets, placed_roads = generator.generate(
+            boundary=boundary,
+            num_assets=num_assets,
+        )
+    except Exception as e:
+        logger.exception(f"Dummy layout generation failed: {e}")
+        layout.status = LayoutStatus.FAILED.value
+        layout.error_message = str(e)
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Layout generation failed: {e}",
+        )
+    
+    layout.status = LayoutStatus.COMPLETED.value
+    layout.terrain_processed = False
     
     # Create Asset records
     total_capacity = 0.0
@@ -194,7 +429,7 @@ async def generate_layout(
     )
     
     logger.info(
-        f"Generated layout {layout.id} for site {site.id}: "
+        f"Generated dummy layout {layout.id}: "
         f"{len(asset_responses)} assets, {len(road_responses)} roads, "
         f"{total_capacity:.1f} kW total capacity"
     )

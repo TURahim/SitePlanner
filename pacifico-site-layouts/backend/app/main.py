@@ -152,12 +152,14 @@ async def root() -> dict[str, str]:
 from app.api.auth import get_current_user
 from app.api.layouts import router as layouts_router
 from app.api.sites import router as sites_router
+from app.api.exports import router as exports_router
 from app.models.user import User
 from fastapi import Depends
 
 # Include API routers
 app.include_router(sites_router)
 app.include_router(layouts_router)
+app.include_router(exports_router)  # Phase B export endpoints
 
 
 @app.get("/api/me", tags=["Auth"])
@@ -175,11 +177,16 @@ async def get_me(user: User = Depends(get_current_user)) -> dict:
 
 
 # API endpoints implemented:
+# Phase A:
 # - POST /api/sites/upload (A-05)
 # - GET /api/sites/{id} (A-06)
 # - GET /api/sites (list)
 # - DELETE /api/sites/{id}
-# - POST /api/layouts/generate (A-07)
+# - POST /api/layouts/generate (A-07, updated for B-01 to B-07)
 # - GET /api/layouts/{id}
 # - GET /api/layouts (list)
 # - DELETE /api/layouts/{id}
+# Phase B:
+# - GET /api/layouts/{id}/export/geojson (B-08)
+# - GET /api/layouts/{id}/export/kmz (B-09)
+# - GET /api/layouts/{id}/export/pdf (B-10)

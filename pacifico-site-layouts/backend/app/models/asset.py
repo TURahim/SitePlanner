@@ -66,6 +66,12 @@ class Asset(Base, UUIDMixin, TimestampMixin):
         nullable=True,
     )
     
+    # Terrain slope at this position (degrees)
+    slope_deg: Mapped[Optional[float]] = mapped_column(
+        Float,
+        nullable=True,
+    )
+    
     # Footprint dimensions (meters)
     footprint_length_m: Mapped[Optional[float]] = mapped_column(
         Float,

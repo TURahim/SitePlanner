@@ -147,6 +147,192 @@ class S3Service:
         except ClientError as e:
             logger.error(f"Failed to delete site files: {e}")
             raise
+    
+    # =========================================================================
+    # Phase B: Terrain and Output File Operations
+    # =========================================================================
+    
+    async def upload_terrain_file(
+        self,
+        s3_key: str,
+        content: bytes,
+        content_type: str = "image/tiff",
+    ) -> str:
+        """
+        Upload terrain file (DEM, slope raster) to outputs bucket.
+        
+        Args:
+            s3_key: S3 key path (e.g., "terrain/{site_id}/dem.tif")
+            content: File content as bytes
+            content_type: MIME type (default: image/tiff for GeoTIFF)
+            
+        Returns:
+            S3 key where the file was stored
+        """
+        try:
+            self._client.put_object(
+                Bucket=self.outputs_bucket,
+                Key=s3_key,
+                Body=content,
+                ContentType=content_type,
+            )
+            logger.info(f"Uploaded terrain file to s3://{self.outputs_bucket}/{s3_key}")
+            return s3_key
+            
+        except ClientError as e:
+            logger.error(f"Failed to upload terrain file: {e}")
+            raise
+    
+    async def download_terrain_file(self, s3_key: str) -> bytes:
+        """
+        Download terrain file from outputs bucket.
+        
+        Args:
+            s3_key: S3 key path
+            
+        Returns:
+            File content as bytes
+        """
+        try:
+            response = self._client.get_object(
+                Bucket=self.outputs_bucket,
+                Key=s3_key,
+            )
+            return response["Body"].read()
+            
+        except ClientError as e:
+            logger.error(f"Failed to download terrain file: {e}")
+            raise
+    
+    async def terrain_file_exists(self, s3_key: str) -> bool:
+        """
+        Check if a terrain file exists in the outputs bucket.
+        
+        Args:
+            s3_key: S3 key path
+            
+        Returns:
+            True if file exists, False otherwise
+        """
+        try:
+            self._client.head_object(
+                Bucket=self.outputs_bucket,
+                Key=s3_key,
+            )
+            return True
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "404":
+                return False
+            raise
+    
+    async def upload_output_file(
+        self,
+        s3_key: str,
+        content: bytes,
+        content_type: str,
+        metadata: Optional[dict] = None,
+    ) -> str:
+        """
+        Upload output file (exports, reports) to outputs bucket.
+        
+        Args:
+            s3_key: S3 key path (e.g., "outputs/{layout_id}/layout.geojson")
+            content: File content as bytes
+            content_type: MIME type
+            metadata: Optional metadata dict
+            
+        Returns:
+            S3 key where the file was stored
+        """
+        extra_args = {"ContentType": content_type}
+        if metadata:
+            extra_args["Metadata"] = metadata
+        
+        try:
+            self._client.put_object(
+                Bucket=self.outputs_bucket,
+                Key=s3_key,
+                Body=content,
+                **extra_args,
+            )
+            logger.info(f"Uploaded output file to s3://{self.outputs_bucket}/{s3_key}")
+            return s3_key
+            
+        except ClientError as e:
+            logger.error(f"Failed to upload output file: {e}")
+            raise
+    
+    async def upload_json(
+        self,
+        s3_key: str,
+        data: dict,
+    ) -> str:
+        """
+        Upload JSON data to outputs bucket.
+        
+        Args:
+            s3_key: S3 key path
+            data: Dict to serialize as JSON
+            
+        Returns:
+            S3 key where the file was stored
+        """
+        import json
+        content = json.dumps(data, indent=2).encode("utf-8")
+        return await self.upload_output_file(
+            s3_key=s3_key,
+            content=content,
+            content_type="application/json",
+        )
+    
+    async def delete_terrain_files(self, site_id: str) -> None:
+        """
+        Delete all terrain files for a site from outputs bucket.
+        
+        Args:
+            site_id: UUID of the site
+        """
+        prefix = f"terrain/{site_id}/"
+        
+        try:
+            response = self._client.list_objects_v2(
+                Bucket=self.outputs_bucket,
+                Prefix=prefix,
+            )
+            
+            objects = response.get("Contents", [])
+            if objects:
+                delete_keys = [{"Key": obj["Key"]} for obj in objects]
+                self._client.delete_objects(
+                    Bucket=self.outputs_bucket,
+                    Delete={"Objects": delete_keys},
+                )
+                logger.info(f"Deleted {len(delete_keys)} terrain files for site {site_id}")
+                
+        except ClientError as e:
+            logger.error(f"Failed to delete terrain files: {e}")
+            raise
+    
+    async def get_output_presigned_url(
+        self,
+        key: str,
+        expires_in: int = 3600,
+    ) -> str:
+        """
+        Generate a presigned URL for downloading from outputs bucket.
+        
+        Args:
+            key: S3 object key
+            expires_in: URL expiration time in seconds (default: 1 hour)
+            
+        Returns:
+            Presigned URL string
+        """
+        return await self.get_presigned_url(
+            bucket=self.outputs_bucket,
+            key=key,
+            expires_in=expires_in,
+        )
 
 
 # Global service instance
