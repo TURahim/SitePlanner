@@ -435,6 +435,168 @@
 }
 
 /* ==========================================================================
+   D-02: Earthwork (Cut/Fill) Section
+   ========================================================================== */
+
+.earthwork-section {
+  margin-top: 1.25rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.earthwork-section h3 {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--navy-primary);
+  margin: 0 0 1rem;
+}
+
+.earthwork-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+  margin-bottom: 0.875rem;
+}
+
+.earthwork-stat {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  padding: 0.75rem;
+  background: var(--surface-base);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+}
+
+.earthwork-stat.cut {
+  border-left: 3px solid #f97316;
+}
+
+.earthwork-stat.fill {
+  border-left: 3px solid #3b82f6;
+}
+
+.earthwork-icon {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+
+.earthwork-stat.cut .earthwork-icon {
+  background: rgba(249, 115, 22, 0.12);
+  color: #ea580c;
+}
+
+.earthwork-stat.fill .earthwork-icon {
+  background: rgba(59, 130, 246, 0.12);
+  color: #2563eb;
+}
+
+.earthwork-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.earthwork-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  min-width: 0;
+}
+
+.earthwork-value {
+  font-family: var(--font-mono);
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--navy-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.earthwork-label {
+  font-size: 0.6875rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* Net Earthwork Indicator */
+.earthwork-net {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.625rem 0.875rem;
+  background: var(--surface-base);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+  margin-bottom: 0.75rem;
+}
+
+.earthwork-net-label {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.earthwork-net-value {
+  font-family: var(--font-mono);
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--navy-primary);
+  flex: 1;
+}
+
+.earthwork-net-badge {
+  font-size: 0.625rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+}
+
+.earthwork-net-badge.export {
+  background: rgba(249, 115, 22, 0.15);
+  color: #c2410c;
+  border: 1px solid rgba(249, 115, 22, 0.3);
+}
+
+.earthwork-net-badge.import {
+  background: rgba(59, 130, 246, 0.15);
+  color: #1d4ed8;
+  border: 1px solid rgba(59, 130, 246, 0.3);
+}
+
+.earthwork-net-badge.balanced {
+  background: rgba(34, 197, 94, 0.15);
+  color: #15803d;
+  border: 1px solid rgba(34, 197, 94, 0.3);
+}
+
+/* Earthwork Hint */
+.earthwork-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.earthwork-hint svg {
+  flex-shrink: 0;
+  margin-top: 0.125rem;
+  color: var(--text-muted);
+  opacity: 0.6;
+}
+
+/* ==========================================================================
    Legend
    ========================================================================== */
 
@@ -450,10 +612,19 @@
   margin: 0 0 0.75rem;
 }
 
+.legend-subtitle {
+  margin-top: 1.25rem !important;
+}
+
 .legend-items {
   display: flex;
   flex-wrap: wrap;
-  gap: 1rem;
+  gap: 0.875rem;
+}
+
+.legend-items.road-legend {
+  flex-direction: column;
+  gap: 0.5rem;
 }
 
 .legend-item {
@@ -462,11 +633,38 @@
   gap: 0.5rem;
 }
 
+.legend-swatch {
+  width: 20px;
+  height: 14px;
+  border-radius: 3px;
+  border: 2px solid;
+  flex-shrink: 0;
+}
+
 .legend-dot {
   width: 12px;
   height: 12px;
   border-radius: 50%;
   flex-shrink: 0;
+}
+
+.legend-line {
+  width: 24px;
+  height: 4px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.legend-line.easy {
+  background-color: #22c55e;
+}
+
+.legend-line.moderate {
+  background-color: #f59e0b;
+}
+
+.legend-line.steep {
+  background-color: #ef4444;
 }
 
 .legend-label {
@@ -618,6 +816,487 @@
 .asset-marker {
   background: transparent;
   border: none;
+}
+
+.asset-marker-container {
+  cursor: pointer;
+}
+
+.asset-marker-container:hover {
+  transform: scale(1.1);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25) !important;
+  z-index: 1000;
+}
+
+/* ==========================================================================
+   Enhanced Popups
+   ========================================================================== */
+
+.asset-popup,
+.road-popup {
+  min-width: 180px;
+}
+
+.asset-popup-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.asset-popup-header strong {
+  font-size: 0.9375rem;
+  line-height: 1.3;
+}
+
+.asset-type-badge {
+  font-size: 0.625rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.popup-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem 1rem;
+}
+
+.popup-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+}
+
+.popup-label {
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.popup-value {
+  font-size: 0.875rem;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  color: var(--navy-primary);
+}
+
+.popup-value.grade-easy {
+  color: #15803d;
+}
+
+.popup-value.grade-moderate {
+  color: #d97706;
+}
+
+.popup-value.grade-steep {
+  color: #dc2626;
+}
+
+.popup-value.grade-unknown {
+  color: var(--text-muted);
+}
+
+/* Road popup specific styles */
+.road-popup strong {
+  display: block;
+  margin-bottom: 0.5rem;
+  padding-bottom: 0.375rem;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+/* D-02: Grading (Cut/Fill) in Asset Popup */
+.grading-stat {
+  grid-column: span 2;
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 0.5rem;
+  margin-top: 0.25rem;
+}
+
+.grading-value {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.8125rem !important;
+}
+
+.grading-cut {
+  color: #ea580c;
+  font-weight: 600;
+}
+
+.grading-fill {
+  color: #2563eb;
+  font-weight: 600;
+}
+
+.grading-separator {
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+/* D-01: Contour tooltip */
+.contour-tooltip {
+  background: rgba(139, 92, 246, 0.9);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  box-shadow: var(--shadow-sm);
+}
+
+.contour-tooltip::before {
+  border-top-color: rgba(139, 92, 246, 0.9);
+}
+
+/* ==========================================================================
+   Terrain Layers (D-01)
+   ========================================================================== */
+
+.terrain-layers-section {
+  background: var(--surface-base);
+}
+
+.terrain-layers {
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+}
+
+.terrain-layer-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.625rem 0.75rem;
+  background: var(--surface-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.terrain-layer-toggle:hover {
+  border-color: var(--accent-primary);
+  background: rgba(58, 128, 198, 0.04);
+}
+
+.terrain-layer-toggle.active {
+  border-color: var(--accent-primary);
+  background: rgba(58, 128, 198, 0.08);
+}
+
+.terrain-layer-toggle.loading {
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+.terrain-checkbox {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  border: 2px solid var(--border-default);
+  background: var(--surface-base);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+}
+
+.terrain-layer-toggle.active .terrain-checkbox {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+}
+
+.terrain-checkbox svg {
+  width: 12px;
+  height: 12px;
+  color: white;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.terrain-layer-toggle.active .terrain-checkbox svg {
+  opacity: 1;
+}
+
+.terrain-layer-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.terrain-layer-name {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--navy-primary);
+  margin-bottom: 0.125rem;
+}
+
+.terrain-layer-desc {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.terrain-loading-indicator {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--border-subtle);
+  border-top-color: var(--accent-primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+/* Terrain Legend */
+.terrain-legend {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.terrain-legend h4 {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 0 0 0.75rem;
+}
+
+.slope-legend-items {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.slope-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+}
+
+.slope-legend-color {
+  width: 20px;
+  height: 14px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.slope-legend-label {
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+}
+
+/* Contour legend */
+.contour-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+}
+
+.contour-legend-line {
+  width: 24px;
+  height: 2px;
+  background: #8b5cf6;
+  border-radius: 1px;
+}
+
+/* Buildable area legend */
+.buildable-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+}
+
+.buildable-legend-swatch {
+  width: 20px;
+  height: 14px;
+  background: rgba(34, 197, 94, 0.3);
+  border: 2px solid #22c55e;
+  border-radius: 3px;
+}
+
+/* Terrain Summary Panel */
+.terrain-summary {
+  margin-top: 1rem;
+  padding: 1rem;
+  background: var(--surface-elevated);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+}
+
+.terrain-summary-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+}
+
+.terrain-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+}
+
+.terrain-stat-label {
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.terrain-stat-value {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  color: var(--navy-primary);
+}
+
+.terrain-summary-divider {
+  grid-column: span 2;
+  height: 1px;
+  background: var(--border-subtle);
+  margin: 0.5rem 0;
+}
+
+/* Slope distribution mini-chart */
+.slope-distribution {
+  grid-column: span 2;
+  margin-top: 0.5rem;
+}
+
+.slope-distribution-label {
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 0.5rem;
+}
+
+.slope-distribution-bars {
+  display: flex;
+  height: 8px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--border-subtle);
+}
+
+.slope-bar {
+  height: 100%;
+  transition: width 0.3s ease;
+}
+
+.slope-bar.very-gentle { background: #22c55e; }
+.slope-bar.gentle { background: #eab308; }
+.slope-bar.moderate { background: #f97316; }
+.slope-bar.steep { background: #ef4444; }
+
+/* ==========================================================================
+   D-05: Layout Variants Section
+   ========================================================================== */
+
+.generate-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.btn-generate-variants {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  background: var(--surface-elevated);
+  border: 2px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  color: var(--text-primary);
+  font-size: 0.9375rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-generate-variants:hover {
+  border-color: var(--navy-primary);
+  background: rgba(27, 20, 100, 0.05);
+}
+
+.btn-generate-variants:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn-generate-variants svg {
+  width: 18px;
+  height: 18px;
+  stroke: var(--navy-primary);
+}
+
+.variant-section {
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 0;
+}
+
+/* ==========================================================================
+   D-03: Exclusion Zones Section
+   ========================================================================== */
+
+.exclusion-zones-section {
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 1.5rem;
+}
+
+/* Exclusion Zone Popup Styles */
+.exclusion-zone-popup {
+  min-width: 150px;
+}
+
+.exclusion-zone-popup strong {
+  display: block;
+  font-size: 0.875rem;
+  color: var(--text-primary);
+  margin-bottom: 0.25rem;
+}
+
+.popup-zone-type {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  text-transform: capitalize;
+}
+
+.popup-buffer {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-top: 0.25rem;
+}
+
+/* Leaflet Draw Overrides */
+.leaflet-draw-toolbar a {
+  background-color: var(--surface-elevated) !important;
+  border-color: var(--border-subtle) !important;
+}
+
+.leaflet-draw-toolbar a:hover {
+  background-color: var(--surface-base) !important;
+}
+
+.leaflet-draw-actions a {
+  background-color: var(--navy-primary) !important;
+  color: white !important;
+}
+
+.leaflet-draw-actions a:hover {
+  background-color: var(--navy-dark) !important;
 }
 
 /* ==========================================================================

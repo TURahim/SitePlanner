@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>Pacifico Energy - 5GW Off-Grid Permian Basin Site (Approximate)</name>
+    <description>
+      Approximate 8,000+ acre (≈12.5 sq mile) boundary for a 5GW modular natural gas + 1.8GW BESS 
+      off-grid microgrid system in the Permian Basin, Texas.
+      Designed for early-stage feasibility analysis and layout generation.
+    </description>
+
+    <!-- Main Site Boundary -->
+    <Placemark>
+      <name>5GW Permian Basin Site Boundary</name>
+      <Style>
+        <LineStyle>
+          <color>ff00ffff</color>
+          <width>3</width>
+        </LineStyle>
+        <PolyStyle>
+          <color>4000ffff</color>
+        </PolyStyle>
+      </Style>
+
+      <Polygon>
+        <extrude>1</extrude>
+        <altitudeMode>clampToGround</altitudeMode>
+        <outerBoundaryIs>
+          <LinearRing>
+            <coordinates>
+              -102.555210,30.886523,0
+              -102.520803,30.886523,0
+              -102.485000,30.886523,0
+              -102.485000,30.850000,0
+              -102.485000,30.813477,0
+              -102.520803,30.813477,0
+              -102.555210,30.813477,0
+              -102.555210,30.850000,0
+              -102.555210,30.886523,0
+            </coordinates>
+          </LinearRing>
+        </outerBoundaryIs>
+      </Polygon>
+    </Placemark>
+  </Document>
+</kml>

@@ -1,5 +1,7 @@
 """
 Site model - represents a physical site with a boundary polygon.
+
+D-05-06: Added preferred_layout_id for marking preferred layout variant.
 """
 import uuid
 from typing import TYPE_CHECKING, Optional
@@ -12,6 +14,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.models.base import Base, TimestampMixin, UUIDMixin
 
 if TYPE_CHECKING:
+    from app.models.exclusion_zone import ExclusionZone
     from app.models.layout import Layout
     from app.models.project import Project
     from app.models.terrain_cache import TerrainCache
@@ -77,10 +80,12 @@ class Site(Base, UUIDMixin, TimestampMixin):
     )
     
     # Layouts for this site
+    # D-05-06: Explicit foreign_keys needed because Site also has preferred_layout_id FK
     layouts: Mapped[list["Layout"]] = relationship(
         "Layout",
         back_populates="site",
         cascade="all, delete-orphan",
+        primaryjoin="Site.id == Layout.site_id",
     )
     
     # Terrain cache entries
@@ -88,6 +93,21 @@ class Site(Base, UUIDMixin, TimestampMixin):
         "TerrainCache",
         back_populates="site",
         cascade="all, delete-orphan",
+    )
+    
+    # Exclusion zones (D-03)
+    exclusion_zones: Mapped[list["ExclusionZone"]] = relationship(
+        "ExclusionZone",
+        back_populates="site",
+        cascade="all, delete-orphan",
+    )
+    
+    # D-05-06: Preferred layout for this site
+    # Tracks which layout variant the user has marked as preferred
+    preferred_layout_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("layouts.id", ondelete="SET NULL"),
+        nullable=True,
     )
     
     def __repr__(self) -> str:

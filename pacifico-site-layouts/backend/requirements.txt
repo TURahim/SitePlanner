@@ -46,6 +46,7 @@ rasterio>=1.4.0
 numpy>=2.0.0
 scipy>=1.14.0
 pyproj>=3.7.0
+scikit-image>=0.24.0         # Contour line extraction (D-01)
 
 # DEM Data Sources
 py3dep>=0.16.0              # USGS 3DEP elevation data (US coverage)

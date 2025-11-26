@@ -2,25 +2,47 @@
 Site management API endpoints.
 
 Handles site upload, retrieval, and listing.
+
+D-05-06: Added preferred layout management endpoint.
 """
 import json
 import logging
-from typing import Annotated
+from typing import Annotated, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from geoalchemy2.functions import ST_Area, ST_AsGeoJSON, ST_GeomFromText, ST_SetSRID
+from pydantic import BaseModel
 from sqlalchemy import cast, select
 from geoalchemy2 import Geography
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_user
 from app.database import get_db
+from app.models.layout import Layout
 from app.models.site import Site
 from app.models.user import User
 from app.schemas.site import SiteListResponse, SiteResponse, SiteUploadResponse
+from app.schemas.exclusion_zone import ExclusionZoneTypesResponse, ZONE_TYPE_INFO
 from app.services.kml_parser import KMLParseError, KMLParser
 from app.services.s3 import get_s3_service
+
+
+# =============================================================================
+# D-05-06: Preferred Layout Schema
+# =============================================================================
+
+
+class SetPreferredLayoutRequest(BaseModel):
+    """Request to set or clear preferred layout for a site."""
+    layout_id: Optional[UUID] = None  # None to clear
+
+
+class PreferredLayoutResponse(BaseModel):
+    """Response for preferred layout operation."""
+    site_id: UUID
+    preferred_layout_id: Optional[UUID]
+    message: str
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +50,33 @@ router = APIRouter(prefix="/api/sites", tags=["Sites"])
 
 # Maximum file size: 10 MB
 MAX_FILE_SIZE = 10 * 1024 * 1024
+
+
+# =============================================================================
+# Exclusion Zone Types (must be BEFORE /{site_id} to avoid path conflict)
+# =============================================================================
+
+
+@router.get(
+    "/exclusion-zone-types",
+    response_model=ExclusionZoneTypesResponse,
+    summary="Get available exclusion zone types",
+    description="Returns all available exclusion zone types with their default colors and buffers.",
+    tags=["Exclusion Zones"],
+)
+async def get_zone_types() -> ExclusionZoneTypesResponse:
+    """
+    Get all available exclusion zone types.
+    
+    This endpoint does not require authentication as zone types are static.
+    It must be defined before /{site_id} routes to avoid path conflicts.
+    """
+    return ExclusionZoneTypesResponse(types=ZONE_TYPE_INFO)
+
+
+# =============================================================================
+# Site Upload
+# =============================================================================
 
 
 @router.post(
@@ -272,4 +321,116 @@ async def delete_site(
     await db.commit()
     
     logger.info(f"Deleted site {site_id} for user {current_user.email}")
+
+
+# =============================================================================
+# D-05-06: Preferred Layout Management
+# =============================================================================
+
+
+@router.put(
+    "/{site_id}/preferred-layout",
+    response_model=PreferredLayoutResponse,
+    summary="Set preferred layout",
+    description="D-05-06: Set or clear the preferred layout variant for a site.",
+)
+async def set_preferred_layout(
+    site_id: UUID,
+    request: SetPreferredLayoutRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> PreferredLayoutResponse:
+    """
+    Set the preferred layout for a site (D-05-06).
+    
+    - **layout_id**: UUID of the layout to mark as preferred, or null to clear
+    
+    The layout must belong to this site. Returns 400 if the layout
+    doesn't exist or belongs to a different site.
+    """
+    # Query site with ownership check
+    result = await db.execute(
+        select(Site).where(
+            Site.id == site_id,
+            Site.owner_id == current_user.id,
+        )
+    )
+    site = result.scalar_one_or_none()
+    
+    if not site:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Site not found",
+        )
+    
+    # If layout_id provided, verify it belongs to this site
+    if request.layout_id:
+        layout_result = await db.execute(
+            select(Layout).where(
+                Layout.id == request.layout_id,
+                Layout.site_id == site_id,
+            )
+        )
+        layout = layout_result.scalar_one_or_none()
+        
+        if not layout:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Layout not found or does not belong to this site",
+            )
+        
+        site.preferred_layout_id = request.layout_id
+        message = f"Layout {request.layout_id} marked as preferred"
+        logger.info(f"Set preferred layout {request.layout_id} for site {site_id}")
+    else:
+        # Clear preferred layout
+        site.preferred_layout_id = None
+        message = "Preferred layout cleared"
+        logger.info(f"Cleared preferred layout for site {site_id}")
+    
+    await db.commit()
+    
+    return PreferredLayoutResponse(
+        site_id=site.id,
+        preferred_layout_id=site.preferred_layout_id,
+        message=message,
+    )
+
+
+@router.get(
+    "/{site_id}/preferred-layout",
+    response_model=PreferredLayoutResponse,
+    summary="Get preferred layout",
+    description="D-05-06: Get the current preferred layout for a site.",
+)
+async def get_preferred_layout(
+    site_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> PreferredLayoutResponse:
+    """
+    Get the preferred layout for a site (D-05-06).
+    
+    Returns the preferred layout ID or null if none is set.
+    """
+    # Query site with ownership check
+    result = await db.execute(
+        select(Site).where(
+            Site.id == site_id,
+            Site.owner_id == current_user.id,
+        )
+    )
+    site = result.scalar_one_or_none()
+    
+    if not site:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Site not found",
+        )
+    
+    return PreferredLayoutResponse(
+        site_id=site.id,
+        preferred_layout_id=site.preferred_layout_id,
+        message="Preferred layout retrieved" if site.preferred_layout_id else "No preferred layout set",
+    )
 

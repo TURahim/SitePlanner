@@ -15,6 +15,23 @@ import type {
   ExportFormat,
   LayoutStatusResponse,
   GenerateLayoutResponseUnion,
+  // D-01: Terrain visualization types
+  TerrainSummaryResponse,
+  ContoursResponse,
+  BuildableAreaResponse,
+  SlopeHeatmapResponse,
+  // D-03: Exclusion zone types
+  ExclusionZone,
+  ExclusionZoneCreateRequest,
+  ExclusionZoneUpdateRequest,
+  ExclusionZoneListResponse,
+  ExclusionZoneTypesResponse,
+  // D-05: Layout variant types
+  LayoutStrategiesResponse,
+  LayoutVariantsResponse,
+  GenerateVariantsRequest,
+  // D-05-06: Preferred layout types
+  PreferredLayoutResponse,
 } from '../types';
 
 // =============================================================================
@@ -187,8 +204,16 @@ export async function exportLayoutPDF(layoutId: string): Promise<ExportResponse>
 }
 
 /**
+ * Export layout as CSV (tabular data)
+ * D-04-05: New export format for spreadsheet analysis
+ */
+export async function exportLayoutCSV(layoutId: string): Promise<ExportResponse> {
+  return exportLayout(layoutId, 'csv');
+}
+
+/**
  * Download a file from a presigned URL
- * Opens the URL in a new tab or triggers download
+ * D-04-06: Uses filename from export response for proper naming
  */
 export function downloadFromUrl(url: string, filename?: string): void {
   const link = document.createElement('a');
@@ -200,4 +225,186 @@ export function downloadFromUrl(url: string, filename?: string): void {
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
+}
+
+// =============================================================================
+// Terrain API (D-01)
+// =============================================================================
+
+/**
+ * Get terrain analysis summary for a site
+ * Includes elevation, slope statistics and buildable area percentages
+ */
+export async function getTerrainSummary(siteId: string): Promise<TerrainSummaryResponse> {
+  const response = await api.get<TerrainSummaryResponse>(
+    `/api/sites/${siteId}/terrain/summary`
+  );
+  return response.data;
+}
+
+/**
+ * Get contour lines for a site
+ * Returns GeoJSON LineStrings at specified elevation intervals
+ */
+export async function getTerrainContours(
+  siteId: string, 
+  intervalM: number = 5
+): Promise<ContoursResponse> {
+  const response = await api.get<ContoursResponse>(
+    `/api/sites/${siteId}/terrain/contours`,
+    { params: { interval_m: intervalM } }
+  );
+  return response.data;
+}
+
+/**
+ * Get buildable area polygons for a site
+ * Returns areas where slope is within limits for specified asset type
+ */
+export async function getTerrainBuildableArea(
+  siteId: string,
+  assetType: string = 'solar_array',
+  maxSlope?: number
+): Promise<BuildableAreaResponse> {
+  const response = await api.get<BuildableAreaResponse>(
+    `/api/sites/${siteId}/terrain/buildable-area`,
+    { params: { asset_type: assetType, max_slope: maxSlope } }
+  );
+  return response.data;
+}
+
+/**
+ * Get slope heatmap polygons for a site
+ * Returns colored zones by slope severity
+ */
+export async function getTerrainSlopeHeatmap(siteId: string): Promise<SlopeHeatmapResponse> {
+  const response = await api.get<SlopeHeatmapResponse>(
+    `/api/sites/${siteId}/terrain/slope-heatmap`
+  );
+  return response.data;
+}
+
+// =============================================================================
+// Exclusion Zones API (D-03)
+// =============================================================================
+
+/**
+ * Get available exclusion zone types
+ * Returns types with colors and default buffers
+ */
+export async function getExclusionZoneTypes(): Promise<ExclusionZoneTypesResponse> {
+  const response = await api.get<ExclusionZoneTypesResponse>(
+    '/api/sites/exclusion-zone-types'
+  );
+  return response.data;
+}
+
+/**
+ * Get all exclusion zones for a site
+ */
+export async function getExclusionZones(siteId: string): Promise<ExclusionZoneListResponse> {
+  const response = await api.get<ExclusionZoneListResponse>(
+    `/api/sites/${siteId}/exclusion-zones`
+  );
+  return response.data;
+}
+
+/**
+ * Get a specific exclusion zone
+ */
+export async function getExclusionZone(siteId: string, zoneId: string): Promise<ExclusionZone> {
+  const response = await api.get<ExclusionZone>(
+    `/api/sites/${siteId}/exclusion-zones/${zoneId}`
+  );
+  return response.data;
+}
+
+/**
+ * Create a new exclusion zone
+ */
+export async function createExclusionZone(
+  siteId: string,
+  zone: ExclusionZoneCreateRequest
+): Promise<ExclusionZone> {
+  const response = await api.post<ExclusionZone>(
+    `/api/sites/${siteId}/exclusion-zones`,
+    zone
+  );
+  return response.data;
+}
+
+/**
+ * Update an existing exclusion zone
+ */
+export async function updateExclusionZone(
+  siteId: string,
+  zoneId: string,
+  zone: ExclusionZoneUpdateRequest
+): Promise<ExclusionZone> {
+  const response = await api.put<ExclusionZone>(
+    `/api/sites/${siteId}/exclusion-zones/${zoneId}`,
+    zone
+  );
+  return response.data;
+}
+
+/**
+ * Delete an exclusion zone
+ */
+export async function deleteExclusionZone(siteId: string, zoneId: string): Promise<void> {
+  await api.delete(`/api/sites/${siteId}/exclusion-zones/${zoneId}`);
+}
+
+// =============================================================================
+// Layout Variants API (D-05)
+// =============================================================================
+
+/**
+ * Get available layout optimization strategies
+ */
+export async function getLayoutStrategies(): Promise<LayoutStrategiesResponse> {
+  const response = await api.get<LayoutStrategiesResponse>('/api/layouts/strategies');
+  return response.data;
+}
+
+/**
+ * Generate multiple layout variants for comparison
+ */
+export async function generateLayoutVariants(
+  request: GenerateVariantsRequest
+): Promise<LayoutVariantsResponse> {
+  const response = await api.post<LayoutVariantsResponse>(
+    '/api/layouts/generate-variants',
+    request
+  );
+  return response.data;
+}
+
+// =============================================================================
+// Preferred Layout API (D-05-06)
+// =============================================================================
+
+/**
+ * Get the preferred layout for a site
+ */
+export async function getPreferredLayout(siteId: string): Promise<PreferredLayoutResponse> {
+  const response = await api.get<PreferredLayoutResponse>(
+    `/api/sites/${siteId}/preferred-layout`
+  );
+  return response.data;
+}
+
+/**
+ * Set or clear the preferred layout for a site
+ * Pass null to clear the preferred layout
+ */
+export async function setPreferredLayout(
+  siteId: string,
+  layoutId: string | null
+): Promise<PreferredLayoutResponse> {
+  const response = await api.put<PreferredLayoutResponse>(
+    `/api/sites/${siteId}/preferred-layout`,
+    { layout_id: layoutId }
+  );
+  return response.data;
 }

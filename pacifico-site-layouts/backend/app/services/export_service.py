@@ -5,7 +5,14 @@ Supports:
 - GeoJSON export (B-08)
 - KMZ export for Google Earth (B-09)
 - PDF report generation (B-10)
+- CSV tabular export (D-04-05)
+
+Phase D-04 enhancements:
+- PDF includes terrain summary, slope stats, buildable %
+- KMZ includes slope/buildability styling
+- CSV export for tabular data
 """
+import csv
 import io
 import json
 import logging
@@ -19,6 +26,15 @@ from app.services.s3 import get_s3_service
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+
+
+# D-04: Slope limits by asset type (degrees)
+SLOPE_LIMITS = {
+    "solar_array": 15.0,
+    "battery": 5.0,
+    "generator": 5.0,
+    "substation": 5.0,
+}
 
 
 class ExportService:
@@ -69,9 +85,13 @@ class ExportService:
         site_boundary: dict,
         assets: list[dict],
         roads: list[dict],
+        layout_data: Optional[dict] = None,
+        terrain_summary: Optional[dict] = None,
     ) -> str:
         """
         Export layout as KMZ for Google Earth.
+        
+        D-04-04: Includes slope/buildability styling with color-coded assets.
         
         Args:
             layout_id: UUID of the layout
@@ -79,6 +99,8 @@ class ExportService:
             site_boundary: Site boundary as GeoJSON
             assets: List of asset dicts with position, type, etc.
             roads: List of road dicts with geometry, etc.
+            layout_data: Layout metadata (capacity, cut/fill, etc.)
+            terrain_summary: Terrain analysis data (D-04)
             
         Returns:
             Presigned S3 download URL
@@ -99,6 +121,13 @@ class ExportService:
             "substation": "ffff0000",      # Blue
         }
         
+        # D-04-04: Road grade colors
+        ROAD_GRADE_COLORS = {
+            "easy": "ff00ff00",      # Green (< 5%)
+            "moderate": "ff00a5ff",  # Orange (5-10%)
+            "steep": "ff0000ff",     # Red (> 10%)
+        }
+        
         # Add site boundary
         if site_boundary and site_boundary.get("coordinates"):
             coords = site_boundary["coordinates"][0]  # Outer ring
@@ -108,8 +137,18 @@ class ExportService:
             pol.style.linestyle.color = "ff0000ff"  # Red
             pol.style.linestyle.width = 3
             pol.style.polystyle.fill = 0
+            
+            # Add site info to description
+            desc_parts = [f"Site: {site_name}"]
+            if layout_data:
+                desc_parts.append(f"Total Capacity: {layout_data.get('total_capacity_kw', 0):,.0f} kW")
+                if layout_data.get("cut_volume_m3"):
+                    desc_parts.append(f"Cut Volume: {layout_data['cut_volume_m3']:,.0f} m³")
+                if layout_data.get("fill_volume_m3"):
+                    desc_parts.append(f"Fill Volume: {layout_data['fill_volume_m3']:,.0f} m³")
+            pol.description = "\n".join(desc_parts)
         
-        # Add assets
+        # Add assets with D-04-04 slope/buildability styling
         assets_folder = kml.newfolder(name="Assets")
         for asset in assets:
             if not asset.get("position"):
@@ -124,23 +163,36 @@ class ExportService:
                 coords=[(coords[0], coords[1])],
             )
             
-            # Set description
+            # D-04-04: Enhanced description with slope suitability
+            asset_type = asset.get("asset_type", "unknown")
+            slope_limit = SLOPE_LIMITS.get(asset_type, 15.0)
+            actual_slope = asset.get("slope_deg")
+            
             desc_parts = [
-                f"Type: {asset.get('asset_type', 'Unknown')}",
-                f"Capacity: {asset.get('capacity_kw', 0)} kW",
+                f"Type: {asset_type.replace('_', ' ').title()}",
+                f"Capacity: {asset.get('capacity_kw', 0):,.0f} kW",
             ]
             if asset.get("elevation_m"):
-                desc_parts.append(f"Elevation: {asset['elevation_m']} m")
-            if asset.get("slope_deg"):
-                desc_parts.append(f"Slope: {asset['slope_deg']}°")
+                desc_parts.append(f"Elevation: {asset['elevation_m']:.1f} m")
+            if actual_slope is not None:
+                slope_status = "✓ Within limit" if actual_slope <= slope_limit else "⚠ Exceeds limit"
+                desc_parts.append(f"Slope: {actual_slope:.1f}° ({slope_status})")
+                desc_parts.append(f"Max allowed: {slope_limit}°")
+            if asset.get("footprint_length_m") and asset.get("footprint_width_m"):
+                desc_parts.append(f"Footprint: {asset['footprint_length_m']:.0f}×{asset['footprint_width_m']:.0f} m")
             pnt.description = "\n".join(desc_parts)
             
-            # Set color based on asset type
-            color = ASSET_COLORS.get(asset.get("asset_type"), "ffffffff")
-            pnt.style.iconstyle.color = color
-            pnt.style.iconstyle.scale = 1.2
+            # D-04-04: Color based on slope suitability
+            base_color = ASSET_COLORS.get(asset_type, "ffffffff")
+            if actual_slope is not None and actual_slope > slope_limit:
+                # Asset exceeds slope limit - use red tint
+                pnt.style.iconstyle.color = "ff5555ff"  # Reddish
+                pnt.style.iconstyle.scale = 1.0
+            else:
+                pnt.style.iconstyle.color = base_color
+                pnt.style.iconstyle.scale = 1.2
         
-        # Add roads
+        # Add roads with D-04-04 grade-based coloring
         roads_folder = kml.newfolder(name="Roads")
         for i, road in enumerate(roads):
             if not road.get("geometry"):
@@ -154,13 +206,37 @@ class ExportService:
                 name=road.get("name", f"Road {i+1}"),
                 coords=[(c[0], c[1]) for c in coords],
             )
-            line.style.linestyle.color = "ff00ffff"  # Yellow
-            line.style.linestyle.width = 3
+            
+            # D-04-04: Color based on grade
+            grade = road.get("max_grade_pct", 0) or 0
+            if grade < 5:
+                grade_class = "easy"
+            elif grade <= 10:
+                grade_class = "moderate"
+            else:
+                grade_class = "steep"
+            
+            line.style.linestyle.color = ROAD_GRADE_COLORS[grade_class]
+            line.style.linestyle.width = 4
             
             desc_parts = [f"Length: {road.get('length_m', 0):.0f} m"]
             if road.get("max_grade_pct"):
-                desc_parts.append(f"Max Grade: {road['max_grade_pct']:.1f}%")
+                desc_parts.append(f"Max Grade: {road['max_grade_pct']:.1f}% ({grade_class.title()})")
             line.description = "\n".join(desc_parts)
+        
+        # D-04-04: Add terrain summary as a document description
+        if terrain_summary:
+            elev = terrain_summary.get("elevation", {})
+            slope = terrain_summary.get("slope", {})
+            kml.document.description = (
+                f"Terrain Summary for {site_name}\n\n"
+                f"DEM Source: {terrain_summary.get('dem_source', 'Unknown')}\n"
+                f"Resolution: {terrain_summary.get('dem_resolution_m', 'N/A')} m\n\n"
+                f"Elevation: {elev.get('min_m', 0):.0f} - {elev.get('max_m', 0):.0f} m "
+                f"(range: {elev.get('range_m', 0):.0f} m)\n"
+                f"Slope: {slope.get('min_deg', 0):.1f}° - {slope.get('max_deg', 0):.1f}° "
+                f"(mean: {slope.get('mean_deg', 0):.1f}°)\n"
+            )
         
         # Save as KMZ (zipped KML)
         kml_content = kml.kml()
@@ -192,9 +268,12 @@ class ExportService:
         layout_data: dict,
         assets: list[dict],
         roads: list[dict],
+        terrain_summary: Optional[dict] = None,
     ) -> str:
         """
         Export layout as PDF report.
+        
+        D-04-01: Includes terrain summary (slope stats, buildable %).
         
         Args:
             layout_id: UUID of the layout
@@ -203,6 +282,7 @@ class ExportService:
             layout_data: Layout metadata (capacity, cut/fill, etc.)
             assets: List of asset dicts
             roads: List of road dicts
+            terrain_summary: Terrain analysis data (D-04)
             
         Returns:
             Presigned S3 download URL
@@ -246,6 +326,14 @@ class ExportService:
             spaceAfter=10,
             textColor=colors.HexColor('#2c5282'),
         )
+        subheading_style = ParagraphStyle(
+            'CustomSubheading',
+            parent=styles['Heading3'],
+            fontSize=11,
+            spaceBefore=12,
+            spaceAfter=6,
+            textColor=colors.HexColor('#4a5568'),
+        )
         
         story = []
         
@@ -270,13 +358,22 @@ class ExportService:
             ["Site Area", f"{site_area_ha:.2f} hectares ({site_area_m2:,.0f} m²)"],
             ["Total Capacity", f"{layout_data.get('total_capacity_kw', 0):,.1f} kW"],
             ["Asset Count", str(len(assets))],
-            ["Road Network", f"{sum(r.get('length_m', 0) for r in roads):,.0f} m"],
+            ["Road Network", f"{sum(r.get('length_m', 0) or 0 for r in roads):,.0f} m"],
         ]
         
-        if layout_data.get("cut_volume_m3"):
-            site_data.append(["Cut Volume", f"{layout_data['cut_volume_m3']:,.0f} m³"])
-        if layout_data.get("fill_volume_m3"):
-            site_data.append(["Fill Volume", f"{layout_data['fill_volume_m3']:,.0f} m³"])
+        # D-04: Enhanced cut/fill display with net earthwork
+        cut_vol = layout_data.get("cut_volume_m3") or 0
+        fill_vol = layout_data.get("fill_volume_m3") or 0
+        if cut_vol > 0 or fill_vol > 0:
+            site_data.append(["Cut Volume", f"{cut_vol:,.0f} m³"])
+            site_data.append(["Fill Volume", f"{fill_vol:,.0f} m³"])
+            net = cut_vol - fill_vol
+            net_label = "Net Export" if net > 0 else "Net Import" if net < 0 else "Balanced"
+            site_data.append(["Net Earthwork", f"{abs(net):,.0f} m³ ({net_label})"])
+        
+        # Add terrain mode
+        if layout_data.get("terrain_processed"):
+            site_data.append(["Terrain Mode", "Terrain-aware placement"])
         
         site_table = Table(site_data, colWidths=[2*inch, 3*inch])
         site_table.setStyle(TableStyle([
@@ -295,17 +392,115 @@ class ExportService:
         story.append(site_table)
         story.append(Spacer(1, 24))
         
+        # D-04-01: Terrain Analysis Summary (if available)
+        if terrain_summary:
+            story.append(Paragraph("Terrain Analysis", heading_style))
+            
+            elev = terrain_summary.get("elevation", {})
+            slope = terrain_summary.get("slope", {})
+            
+            terrain_data = [
+                ["Property", "Value"],
+                ["DEM Source", terrain_summary.get("dem_source", "N/A")],
+                ["DEM Resolution", f"{terrain_summary.get('dem_resolution_m', 'N/A')} m"],
+                ["Elevation Range", f"{elev.get('min_m', 0):.0f} - {elev.get('max_m', 0):.0f} m"],
+                ["Elevation Mean", f"{elev.get('mean_m', 0):.1f} m"],
+                ["Slope Range", f"{slope.get('min_deg', 0):.1f}° - {slope.get('max_deg', 0):.1f}°"],
+                ["Slope Mean", f"{slope.get('mean_deg', 0):.1f}°"],
+            ]
+            
+            terrain_table = Table(terrain_data, colWidths=[2*inch, 3*inch])
+            terrain_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2c5282')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 11),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#f7fafc')),
+                ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#e2e8f0')),
+                ('FONTSIZE', (0, 1), (-1, -1), 10),
+                ('TOPPADDING', (0, 1), (-1, -1), 8),
+                ('BOTTOMPADDING', (0, 1), (-1, -1), 8),
+            ]))
+            story.append(terrain_table)
+            story.append(Spacer(1, 16))
+            
+            # D-04-01: Slope Distribution
+            distribution = slope.get("distribution", [])
+            if distribution:
+                story.append(Paragraph("Slope Distribution", subheading_style))
+                
+                slope_dist_data = [["Slope Range", "Percentage", "Area (m²)"]]
+                for bucket in distribution:
+                    slope_dist_data.append([
+                        bucket.get("range", ""),
+                        f"{bucket.get('percentage', 0):.1f}%",
+                        f"{bucket.get('area_m2', 0):,.0f}",
+                    ])
+                
+                slope_dist_table = Table(slope_dist_data, colWidths=[2*inch, 1.5*inch, 1.5*inch])
+                slope_dist_table.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#4a5568')),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                    ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                    ('ALIGN', (1, 0), (-1, -1), 'CENTER'),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('FONTSIZE', (0, 0), (-1, 0), 10),
+                    ('BOTTOMPADDING', (0, 0), (-1, 0), 10),
+                    ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#f7fafc')),
+                    ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#e2e8f0')),
+                    ('FONTSIZE', (0, 1), (-1, -1), 9),
+                    ('TOPPADDING', (0, 1), (-1, -1), 6),
+                    ('BOTTOMPADDING', (0, 1), (-1, -1), 6),
+                ]))
+                story.append(slope_dist_table)
+                story.append(Spacer(1, 16))
+            
+            # D-04-01: Buildable Area by Asset Type
+            buildable_areas = terrain_summary.get("buildable_area", [])
+            if buildable_areas:
+                story.append(Paragraph("Buildable Area by Asset Type", subheading_style))
+                
+                buildable_data = [["Asset Type", "Max Slope", "Buildable Area", "% of Site"]]
+                for ba in buildable_areas:
+                    buildable_data.append([
+                        ba.get("asset_type", "").replace("_", " ").title(),
+                        f"{ba.get('max_slope_deg', 0)}°",
+                        f"{ba.get('area_ha', 0):.2f} ha",
+                        f"{ba.get('percentage', 0):.1f}%",
+                    ])
+                
+                buildable_table = Table(buildable_data, colWidths=[1.8*inch, 1.2*inch, 1.5*inch, 1*inch])
+                buildable_table.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#4a5568')),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                    ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                    ('ALIGN', (1, 0), (-1, -1), 'CENTER'),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('FONTSIZE', (0, 0), (-1, 0), 10),
+                    ('BOTTOMPADDING', (0, 0), (-1, 0), 10),
+                    ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#f7fafc')),
+                    ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#e2e8f0')),
+                    ('FONTSIZE', (0, 1), (-1, -1), 9),
+                    ('TOPPADDING', (0, 1), (-1, -1), 6),
+                    ('BOTTOMPADDING', (0, 1), (-1, -1), 6),
+                ]))
+                story.append(buildable_table)
+            
+            story.append(Spacer(1, 24))
+        
         # Asset Inventory
         story.append(Paragraph("Asset Inventory", heading_style))
         
-        # Group assets by type
+        # Group assets by type with D-04 cut/fill breakdown
         asset_summary = {}
         for asset in assets:
             atype = asset.get("asset_type", "unknown")
             if atype not in asset_summary:
                 asset_summary[atype] = {"count": 0, "capacity": 0}
             asset_summary[atype]["count"] += 1
-            asset_summary[atype]["capacity"] += asset.get("capacity_kw", 0)
+            asset_summary[atype]["capacity"] += asset.get("capacity_kw", 0) or 0
         
         asset_data = [["Asset Type", "Count", "Total Capacity (kW)"]]
         for atype, data in sorted(asset_summary.items()):
@@ -343,8 +538,8 @@ class ExportService:
                     asset.get("name", "-"),
                     asset.get("asset_type", "-").replace("_", " ").title(),
                     f"{asset.get('capacity_kw', 0):.0f} kW",
-                    f"{asset.get('elevation_m', '-')} m" if asset.get('elevation_m') else "-",
-                    f"{asset.get('slope_deg', '-')}°" if asset.get('slope_deg') else "-",
+                    f"{asset.get('elevation_m', 0):.1f} m" if asset.get('elevation_m') else "-",
+                    f"{asset.get('slope_deg', 0):.1f}°" if asset.get('slope_deg') else "-",
                 ])
             
             detail_table = Table(detail_data, colWidths=[1.5*inch, 1.3*inch, 1*inch, 1*inch, 0.8*inch])
@@ -363,6 +558,38 @@ class ExportService:
                 ('BOTTOMPADDING', (0, 1), (-1, -1), 6),
             ]))
             story.append(detail_table)
+            story.append(Spacer(1, 24))
+        
+        # Road Network Details
+        if roads:
+            story.append(Paragraph("Road Network", heading_style))
+            
+            road_data = [["Road", "Length (m)", "Max Grade (%)"]]
+            for road in roads:
+                grade = road.get("max_grade_pct")
+                grade_str = f"{grade:.1f}%" if grade is not None else "-"
+                road_data.append([
+                    road.get("name", "-"),
+                    f"{road.get('length_m', 0):.0f}",
+                    grade_str,
+                ])
+            
+            road_table = Table(road_data, colWidths=[2.5*inch, 1.5*inch, 1.5*inch])
+            road_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#4a5568')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('ALIGN', (1, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 10),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 10),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#f7fafc')),
+                ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#e2e8f0')),
+                ('FONTSIZE', (0, 1), (-1, -1), 9),
+                ('TOPPADDING', (0, 1), (-1, -1), 6),
+                ('BOTTOMPADDING', (0, 1), (-1, -1), 6),
+            ]))
+            story.append(road_table)
         
         # Build PDF
         doc.build(story)
@@ -378,6 +605,107 @@ class ExportService:
         
         url = await self._s3_service.get_output_presigned_url(s3_key)
         logger.info(f"Generated PDF export for layout {layout_id}")
+        
+        return url
+    
+    async def export_csv(
+        self,
+        layout_id: UUID,
+        site_name: str,
+        site_area_m2: float,
+        layout_data: dict,
+        assets: list[dict],
+        roads: list[dict],
+    ) -> str:
+        """
+        Export layout as CSV for spreadsheet analysis.
+        
+        D-04-05: New export format with tabular asset/road data.
+        
+        Args:
+            layout_id: UUID of the layout
+            site_name: Name of the site
+            site_area_m2: Site area in square meters
+            layout_data: Layout metadata
+            assets: List of asset dicts
+            roads: List of road dicts
+            
+        Returns:
+            Presigned S3 download URL
+        """
+        # Create multi-sheet CSV as a ZIP file with separate CSVs
+        csv_buffer = io.BytesIO()
+        
+        with zipfile.ZipFile(csv_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+            # Summary sheet
+            summary_csv = io.StringIO()
+            summary_writer = csv.writer(summary_csv)
+            summary_writer.writerow(["Property", "Value"])
+            summary_writer.writerow(["Site Name", site_name])
+            summary_writer.writerow(["Site Area (m²)", f"{site_area_m2:.0f}"])
+            summary_writer.writerow(["Site Area (ha)", f"{site_area_m2 / 10000:.2f}"])
+            summary_writer.writerow(["Total Capacity (kW)", f"{layout_data.get('total_capacity_kw', 0):.1f}"])
+            summary_writer.writerow(["Asset Count", len(assets)])
+            summary_writer.writerow(["Road Count", len(roads)])
+            summary_writer.writerow(["Total Road Length (m)", f"{sum(r.get('length_m', 0) or 0 for r in roads):.0f}"])
+            summary_writer.writerow(["Cut Volume (m³)", f"{layout_data.get('cut_volume_m3', 0):.0f}"])
+            summary_writer.writerow(["Fill Volume (m³)", f"{layout_data.get('fill_volume_m3', 0):.0f}"])
+            summary_writer.writerow(["Generated At", datetime.utcnow().isoformat()])
+            zf.writestr("summary.csv", summary_csv.getvalue())
+            
+            # Assets sheet
+            assets_csv = io.StringIO()
+            assets_writer = csv.writer(assets_csv)
+            assets_writer.writerow([
+                "ID", "Name", "Asset Type", "Capacity (kW)",
+                "Longitude", "Latitude", "Elevation (m)", "Slope (deg)",
+                "Footprint Length (m)", "Footprint Width (m)"
+            ])
+            for asset in assets:
+                coords = asset.get("position", {}).get("coordinates", [None, None])
+                assets_writer.writerow([
+                    asset.get("id", ""),
+                    asset.get("name", ""),
+                    asset.get("asset_type", ""),
+                    asset.get("capacity_kw", ""),
+                    coords[0] if len(coords) > 0 else "",
+                    coords[1] if len(coords) > 1 else "",
+                    asset.get("elevation_m", ""),
+                    asset.get("slope_deg", ""),
+                    asset.get("footprint_length_m", ""),
+                    asset.get("footprint_width_m", ""),
+                ])
+            zf.writestr("assets.csv", assets_csv.getvalue())
+            
+            # Roads sheet
+            roads_csv = io.StringIO()
+            roads_writer = csv.writer(roads_csv)
+            roads_writer.writerow([
+                "ID", "Name", "Length (m)", "Max Grade (%)", "Coordinate Count"
+            ])
+            for road in roads:
+                coords = road.get("geometry", {}).get("coordinates", [])
+                roads_writer.writerow([
+                    road.get("id", ""),
+                    road.get("name", ""),
+                    f"{road.get('length_m', 0):.0f}" if road.get('length_m') else "",
+                    f"{road.get('max_grade_pct', 0):.1f}" if road.get('max_grade_pct') else "",
+                    len(coords),
+                ])
+            zf.writestr("roads.csv", roads_csv.getvalue())
+        
+        csv_bytes = csv_buffer.getvalue()
+        
+        # Upload to S3
+        s3_key = f"{self.OUTPUTS_S3_PREFIX}/{layout_id}/layout_data.zip"
+        await self._s3_service.upload_output_file(
+            s3_key=s3_key,
+            content=csv_bytes,
+            content_type="application/zip",
+        )
+        
+        url = await self._s3_service.get_output_presigned_url(s3_key)
+        logger.info(f"Generated CSV export for layout {layout_id}")
         
         return url
 

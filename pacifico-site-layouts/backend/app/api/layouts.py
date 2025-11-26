@@ -13,7 +13,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from geoalchemy2.functions import ST_AsGeoJSON, ST_GeomFromText, ST_Length, ST_SetSRID
 from shapely import wkt
-from shapely.geometry import mapping
+from shapely.geometry import mapping, shape
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -22,6 +22,7 @@ from app.api.auth import get_current_user
 from app.config import get_settings
 from app.database import get_db
 from app.models.asset import Asset
+from app.models.exclusion_zone import ExclusionZone
 from app.models.layout import Layout, LayoutStatus
 from app.models.road import Road
 from app.models.site import Site
@@ -35,20 +36,52 @@ from app.schemas.layout import (
     LayoutListResponse,
     LayoutResponse,
     LayoutStatusResponse,
+    LayoutStrategy,
+    LayoutStrategiesResponse,
+    LayoutVariantMetrics,
+    LayoutVariantResponse,
+    LayoutVariantsResponse,
     RoadResponse,
+    STRATEGY_INFO_LIST,
+    VariantComparison,
 )
 # Phase A: Dummy layout generator
 from app.services.layout_generator import DummyLayoutGenerator
 # Phase B: Terrain-aware services
 from app.services.dem_service import get_dem_service
 from app.services.slope_service import get_slope_service
-from app.services.terrain_layout_generator import TerrainAwareLayoutGenerator
+# D-05: Import LayoutStrategy enum from generator for strategy mapping
+from app.services.terrain_layout_generator import (
+    TerrainAwareLayoutGenerator,
+    LayoutStrategy as GeneratorStrategy,
+)
+# Phase E: Enhanced terrain analysis
+from app.services.terrain_analysis_service import (
+    get_terrain_analysis_service,
+    TerrainAnalysisService,
+)
 # Phase C: Async job queuing
 from app.services.sqs_service import get_sqs_service
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/layouts", tags=["Layouts"])
+
+
+# =============================================================================
+# D-05: Layout Strategies Endpoint
+# =============================================================================
+
+
+@router.get(
+    "/strategies",
+    response_model=LayoutStrategiesResponse,
+    summary="Get available layout strategies",
+    description="D-05: Returns all available layout optimization strategies with descriptions.",
+)
+async def get_layout_strategies() -> LayoutStrategiesResponse:
+    """Get available layout strategies for variant generation."""
+    return LayoutStrategiesResponse(strategies=STRATEGY_INFO_LIST)
 
 
 @router.post(
@@ -165,8 +198,452 @@ async def generate_layout(
 
 
 # =============================================================================
+# D-05: Layout Variants Generation Endpoint
+# =============================================================================
+
+
+@router.post(
+    "/generate-variants",
+    response_model=LayoutVariantsResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Generate layout variants",
+    description="D-05: Generate multiple layout variants with different optimization strategies for comparison.",
+)
+async def generate_layout_variants(
+    request: GenerateLayoutRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> LayoutVariantsResponse:
+    """
+    Generate multiple layout variants for comparison (D-05).
+    
+    Creates layouts using different optimization strategies:
+    - **Balanced**: Balance capacity, earthwork, and access roads
+    - **Density**: Maximize capacity per hectare
+    - **Low Earthwork**: Minimize grading and cut/fill volumes
+    - **Clustered**: Group assets tightly to minimize infrastructure
+    
+    Returns all variants with a comparison table showing which is best for each metric.
+    """
+    # Load site with ownership check
+    site_result = await db.execute(
+        select(Site).where(
+            Site.id == request.site_id,
+            Site.owner_id == current_user.id,
+        )
+    )
+    site = site_result.scalar_one_or_none()
+    
+    if not site:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Site not found",
+        )
+    
+    # Get site boundary as WKT for Shapely
+    boundary_wkt_result = await db.execute(
+        select(Site.boundary.ST_AsText()).where(Site.id == site.id)
+    )
+    boundary_wkt = boundary_wkt_result.scalar()
+    
+    if not boundary_wkt:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Site has no boundary geometry",
+        )
+    
+    # Parse boundary with Shapely
+    try:
+        boundary = wkt.loads(boundary_wkt)
+    except Exception as e:
+        logger.error(f"Failed to parse site boundary: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to parse site boundary",
+        )
+    
+    # Determine which strategies to use
+    strategies = request.variant_strategies or [
+        LayoutStrategy.BALANCED,
+        LayoutStrategy.DENSITY,
+        LayoutStrategy.LOW_EARTHWORK,
+        LayoutStrategy.CLUSTERED,
+    ]
+    
+    num_assets = random_asset_count(request.target_capacity_kw)
+    
+    # Generate variants
+    variants: list[LayoutVariantResponse] = []
+    metrics: list[LayoutVariantMetrics] = []
+    
+    for strategy in strategies:
+        try:
+            variant_result = await _generate_variant(
+                site=site,
+                boundary=boundary,
+                target_capacity_kw=request.target_capacity_kw,
+                dem_resolution_m=request.dem_resolution_m,
+                num_assets=num_assets,
+                strategy=strategy,
+                db=db,
+            )
+            variants.append(variant_result["variant"])
+            metrics.append(variant_result["metrics"])
+        except Exception as e:
+            logger.error(f"Failed to generate {strategy} variant: {e}")
+            # Continue with other variants
+    
+    if not variants:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to generate any layout variants",
+        )
+    
+    # Build comparison
+    comparison = _build_variant_comparison(metrics)
+    
+    logger.info(f"Generated {len(variants)} layout variants for site {site.id}")
+    
+    return LayoutVariantsResponse(
+        site_id=site.id,
+        variants=variants,
+        comparison=comparison,
+    )
+
+
+async def _generate_variant(
+    site: Site,
+    boundary,
+    target_capacity_kw: float,
+    dem_resolution_m: int,
+    num_assets: int,
+    strategy: LayoutStrategy,
+    db: AsyncSession,
+) -> dict:
+    """
+    Generate a single variant with a specific strategy (D-05).
+    
+    Phase E: Enhanced with terrain analysis for suitability scoring.
+    
+    Returns both the variant response and metrics for comparison.
+    """
+    # Map schema strategy to generator strategy
+    strategy_mapping = {
+        LayoutStrategy.BALANCED: GeneratorStrategy.BALANCED,
+        LayoutStrategy.DENSITY: GeneratorStrategy.DENSITY,
+        LayoutStrategy.LOW_EARTHWORK: GeneratorStrategy.LOW_EARTHWORK,
+        LayoutStrategy.CLUSTERED: GeneratorStrategy.CLUSTERED,
+    }
+    generator_strategy = strategy_mapping.get(strategy, GeneratorStrategy.BALANCED)
+    
+    strategy_names = {
+        LayoutStrategy.BALANCED: "Balanced",
+        LayoutStrategy.DENSITY: "High Density",
+        LayoutStrategy.LOW_EARTHWORK: "Low Earthwork",
+        LayoutStrategy.CLUSTERED: "Clustered",
+    }
+    
+    dem_service = get_dem_service()
+    slope_service = get_slope_service()
+    terrain_analysis = get_terrain_analysis_service()
+    
+    # Fetch DEM
+    dem_s3_key = await dem_service.get_dem_for_site(
+        site_id=site.id,
+        boundary=boundary,
+        db=db,
+        resolution_m=dem_resolution_m,
+    )
+    
+    if not dem_s3_key:
+        raise Exception("DEM unavailable for site")
+    
+    # Compute slope
+    slope_s3_key = await slope_service.get_slope_for_site(
+        site_id=site.id,
+        dem_s3_key=dem_s3_key,
+        db=db,
+    )
+    
+    if not slope_s3_key:
+        raise Exception("Slope computation failed")
+    
+    # Load raster data
+    dem_array, dem_profile = await dem_service.get_dem_array(dem_s3_key)
+    slope_array, slope_profile = await slope_service.get_slope_array(slope_s3_key)
+    
+    # Phase E: Compute enhanced terrain metrics
+    transform = dem_profile["transform"]
+    crs = dem_profile.get("crs", "EPSG:4326")
+    
+    terrain_metrics = terrain_analysis.analyze_terrain(
+        dem_array=dem_array,
+        transform=transform,
+        crs=str(crs),
+        apply_smoothing=True,
+    )
+    
+    # Create boundary mask for suitability scoring
+    from rasterio.features import rasterize
+    boundary_mask = rasterize(
+        [(boundary, 1)],
+        out_shape=dem_array.shape,
+        transform=transform,
+        fill=0,
+        dtype='uint8',
+    ).astype(bool)
+    
+    # Compute suitability scores for each asset type
+    suitability_scores = {}
+    for asset_type in ["solar_array", "battery", "generator", "substation"]:
+        suitability_scores[asset_type] = terrain_analysis.compute_suitability_score(
+            metrics=terrain_metrics,
+            boundary_mask=boundary_mask,
+            asset_type=asset_type,
+        )
+    
+    # Fetch exclusion zones
+    exclusion_zones = await _fetch_exclusion_zones(site.id, db)
+    
+    # Generate layout with strategy and enhanced terrain data
+    generator = TerrainAwareLayoutGenerator(
+        target_capacity_kw=target_capacity_kw,
+        strategy=generator_strategy,
+    )
+    
+    placed_assets, placed_roads, cut_fill = generator.generate(
+        boundary=boundary,
+        dem_array=dem_array,
+        slope_array=slope_array,
+        transform=transform,
+        num_assets=num_assets,
+        exclusion_zones=exclusion_zones,
+        aspect_array=terrain_metrics.aspect_deg,
+        suitability_scores=suitability_scores,
+    )
+    
+    # Create Layout record
+    layout = Layout(
+        site_id=site.id,
+        status=LayoutStatus.COMPLETED.value,
+        terrain_processed=True,
+        cut_volume_m3=cut_fill.cut_volume_m3,
+        fill_volume_m3=cut_fill.fill_volume_m3,
+    )
+    db.add(layout)
+    await db.flush()
+    
+    # Build per-asset cut/fill lookup
+    per_asset_cutfill: dict[str, dict[str, float]] = {}
+    for item in cut_fill.per_asset:
+        per_asset_cutfill[item["asset_name"]] = {
+            "cut_m3": item.get("cut_m3", 0),
+            "fill_m3": item.get("fill_m3", 0),
+        }
+    
+    # Create Asset records
+    total_capacity = 0.0
+    asset_responses = []
+    
+    for placed in placed_assets:
+        asset = Asset(
+            layout_id=layout.id,
+            asset_type=placed.asset_type,
+            name=placed.name,
+            position=ST_SetSRID(
+                ST_GeomFromText(placed.position.wkt),
+                4326
+            ),
+            capacity_kw=placed.capacity_kw,
+            elevation_m=placed.elevation_m,
+            slope_deg=placed.slope_deg,
+            footprint_length_m=placed.footprint_length_m,
+            footprint_width_m=placed.footprint_width_m,
+        )
+        db.add(asset)
+        await db.flush()
+        
+        total_capacity += placed.capacity_kw or 0
+        asset_cutfill = per_asset_cutfill.get(placed.name, {})
+        
+        asset_responses.append(AssetResponse(
+            id=asset.id,
+            asset_type=asset.asset_type,
+            name=asset.name,
+            capacity_kw=asset.capacity_kw,
+            elevation_m=asset.elevation_m,
+            slope_deg=asset.slope_deg,
+            position=mapping(placed.position),
+            footprint_length_m=placed.footprint_length_m,
+            footprint_width_m=placed.footprint_width_m,
+            cut_m3=asset_cutfill.get("cut_m3"),
+            fill_m3=asset_cutfill.get("fill_m3"),
+            # Phase E: Enhanced terrain metrics
+            aspect_deg=placed.aspect_deg if placed.aspect_deg >= 0 else None,
+            suitability_score=placed.suitability_score,
+            rotation_deg=placed.rotation_deg,
+        ))
+    
+    # Create Road records
+    road_responses = []
+    total_road_length = 0.0
+    
+    for placed in placed_roads:
+        road = Road(
+            layout_id=layout.id,
+            name=placed.name,
+            geometry=ST_SetSRID(
+                ST_GeomFromText(placed.geometry.wkt),
+                4326
+            ),
+            length_m=placed.length_m,
+            width_m=placed.width_m,
+            max_grade_pct=placed.max_grade_pct,
+        )
+        db.add(road)
+        await db.flush()
+        
+        total_road_length += placed.length_m or 0
+        
+        road_responses.append(RoadResponse(
+            id=road.id,
+            name=road.name,
+            length_m=road.length_m,
+            max_grade_pct=road.max_grade_pct,
+            geometry=mapping(placed.geometry),
+        ))
+    
+    # Update layout with totals
+    layout.total_capacity_kw = round(total_capacity, 1)
+    await db.commit()
+    await db.refresh(layout)
+    
+    # Generate GeoJSON
+    geojson = TerrainAwareLayoutGenerator.to_geojson_feature_collection(
+        placed_assets,
+        placed_roads,
+        cut_fill,
+    )
+    
+    # Calculate capacity per hectare
+    site_area_ha = (site.area_m2 or 0) / 10000
+    capacity_per_ha = total_capacity / site_area_ha if site_area_ha > 0 else None
+    
+    # Build variant response
+    variant = LayoutVariantResponse(
+        strategy=strategy,
+        strategy_name=strategy_names.get(strategy, strategy.value),
+        layout=LayoutResponse(
+            id=layout.id,
+            site_id=layout.site_id,
+            status=layout.status,
+            total_capacity_kw=layout.total_capacity_kw,
+            cut_volume_m3=layout.cut_volume_m3,
+            fill_volume_m3=layout.fill_volume_m3,
+            error_message=layout.error_message,
+            created_at=layout.created_at,
+            updated_at=layout.updated_at,
+        ),
+        assets=asset_responses,
+        roads=road_responses,
+        geojson=geojson,
+    )
+    
+    # Build metrics
+    metrics = LayoutVariantMetrics(
+        layout_id=layout.id,
+        strategy=strategy,
+        strategy_name=strategy_names.get(strategy, strategy.value),
+        total_capacity_kw=total_capacity,
+        asset_count=len(asset_responses),
+        road_length_m=total_road_length,
+        cut_volume_m3=cut_fill.cut_volume_m3,
+        fill_volume_m3=cut_fill.fill_volume_m3,
+        net_earthwork_m3=cut_fill.cut_volume_m3 - cut_fill.fill_volume_m3,
+        capacity_per_hectare=capacity_per_ha,
+    )
+    
+    return {"variant": variant, "metrics": metrics}
+
+
+def _build_variant_comparison(metrics: list[LayoutVariantMetrics]) -> VariantComparison:
+    """
+    Build comparison analysis across variants (D-05).
+    
+    Identifies best variant for each metric category.
+    """
+    if not metrics:
+        raise ValueError("No metrics to compare")
+    
+    # Find best for each category
+    best_capacity = max(metrics, key=lambda m: m.total_capacity_kw)
+    best_earthwork = min(metrics, key=lambda m: abs(m.net_earthwork_m3))
+    best_roads = min(metrics, key=lambda m: m.road_length_m)
+    
+    return VariantComparison(
+        best_capacity_id=best_capacity.layout_id,
+        best_earthwork_id=best_earthwork.layout_id,
+        best_road_network_id=best_roads.layout_id,
+        metrics_table=metrics,
+    )
+
+
+# =============================================================================
 # Phase C (C-03): Async Job Enqueueing
 # =============================================================================
+
+
+async def _fetch_exclusion_zones(site_id: UUID, db: AsyncSession) -> list:
+    """
+    Fetch exclusion zones for a site as Shapely polygons.
+    
+    D-03: Retrieves all exclusion zones and converts them to polygons
+    with their buffers applied.
+    
+    Args:
+        site_id: UUID of the site
+        db: Database session
+        
+    Returns:
+        List of Shapely Polygon objects with buffers applied
+    """
+    from shapely.ops import unary_union
+    
+    result = await db.execute(
+        select(ExclusionZone).where(ExclusionZone.site_id == site_id)
+    )
+    zones = result.scalars().all()
+    
+    if not zones:
+        return []
+    
+    exclusion_polygons = []
+    
+    for zone in zones:
+        # Get geometry as GeoJSON
+        geom_result = await db.execute(
+            select(ST_AsGeoJSON(ExclusionZone.geometry))
+            .where(ExclusionZone.id == zone.id)
+        )
+        geom_json = geom_result.scalar()
+        
+        if geom_json:
+            try:
+                geom_dict = json.loads(geom_json)
+                polygon = shape(geom_dict)
+                
+                # Apply buffer if specified
+                if zone.buffer_m and zone.buffer_m > 0:
+                    # Buffer in degrees (approximate: 1 degree ≈ 111km at equator)
+                    buffer_deg = zone.buffer_m / 111000
+                    polygon = polygon.buffer(buffer_deg)
+                
+                if polygon.is_valid and not polygon.is_empty:
+                    exclusion_polygons.append(polygon)
+            except Exception as e:
+                logger.warning(f"Could not parse exclusion zone {zone.id}: {e}")
+    
+    return exclusion_polygons
 
 
 async def _enqueue_layout_job(
@@ -225,10 +702,11 @@ async def _generate_terrain_aware_layout(
     num_assets: int,
     db: AsyncSession,
 ) -> LayoutGenerateResponse:
-    """Generate layout using terrain-aware placement (Phase B)."""
+    """Generate layout using terrain-aware placement (Phase B, enhanced Phase E)."""
     
     dem_service = get_dem_service()
     slope_service = get_slope_service()
+    terrain_analysis = get_terrain_analysis_service()
     
     try:
         # Step 1: Fetch DEM
@@ -273,7 +751,43 @@ async def _generate_terrain_aware_layout(
         dem_array, dem_profile = await dem_service.get_dem_array(dem_s3_key)
         slope_array, slope_profile = await slope_service.get_slope_array(slope_s3_key)
         
-        # Step 4: Generate terrain-aware layout
+        # Phase E: Compute enhanced terrain metrics
+        transform = dem_profile["transform"]
+        crs = dem_profile.get("crs", "EPSG:4326")
+        
+        logger.info(f"Computing enhanced terrain analysis for site {site.id}")
+        terrain_metrics = terrain_analysis.analyze_terrain(
+            dem_array=dem_array,
+            transform=transform,
+            crs=str(crs),
+            apply_smoothing=True,
+        )
+        
+        # Create boundary mask for suitability scoring
+        from rasterio.features import rasterize
+        boundary_mask = rasterize(
+            [(boundary, 1)],
+            out_shape=dem_array.shape,
+            transform=transform,
+            fill=0,
+            dtype='uint8',
+        ).astype(bool)
+        
+        # Compute suitability scores for each asset type
+        suitability_scores = {}
+        for asset_type in ["solar_array", "battery", "generator", "substation"]:
+            suitability_scores[asset_type] = terrain_analysis.compute_suitability_score(
+                metrics=terrain_metrics,
+                boundary_mask=boundary_mask,
+                asset_type=asset_type,
+            )
+        
+        # D-03: Fetch exclusion zones for this site
+        exclusion_zones = await _fetch_exclusion_zones(site.id, db)
+        if exclusion_zones:
+            logger.info(f"Found {len(exclusion_zones)} exclusion zones for site {site.id}")
+        
+        # Step 4: Generate terrain-aware layout with enhanced metrics
         logger.info(f"Generating terrain-aware layout for site {site.id}")
         generator = TerrainAwareLayoutGenerator(target_capacity_kw=target_capacity_kw)
         
@@ -281,8 +795,11 @@ async def _generate_terrain_aware_layout(
             boundary=boundary,
             dem_array=dem_array,
             slope_array=slope_array,
-            transform=dem_profile["transform"],
+            transform=transform,
             num_assets=num_assets,
+            exclusion_zones=exclusion_zones,
+            aspect_array=terrain_metrics.aspect_deg,
+            suitability_scores=suitability_scores,
         )
         
         # Update layout with terrain flag and cut/fill
@@ -290,6 +807,14 @@ async def _generate_terrain_aware_layout(
         layout.cut_volume_m3 = cut_fill.cut_volume_m3
         layout.fill_volume_m3 = cut_fill.fill_volume_m3
         layout.status = LayoutStatus.COMPLETED.value
+        
+        # D-02: Build per-asset cut/fill lookup from CutFillResult
+        per_asset_cutfill: dict[str, dict[str, float]] = {}
+        for item in cut_fill.per_asset:
+            per_asset_cutfill[item["asset_name"]] = {
+                "cut_m3": item.get("cut_m3", 0),
+                "fill_m3": item.get("fill_m3", 0),
+            }
         
         # Create Asset records with terrain data
         total_capacity = 0.0
@@ -315,6 +840,9 @@ async def _generate_terrain_aware_layout(
             
             total_capacity += placed.capacity_kw or 0
             
+            # D-02: Get per-asset cut/fill from lookup
+            asset_cutfill = per_asset_cutfill.get(placed.name, {})
+            
             asset_responses.append(AssetResponse(
                 id=asset.id,
                 asset_type=asset.asset_type,
@@ -323,6 +851,14 @@ async def _generate_terrain_aware_layout(
                 elevation_m=asset.elevation_m,
                 slope_deg=asset.slope_deg,
                 position=mapping(placed.position),
+                footprint_length_m=placed.footprint_length_m,
+                footprint_width_m=placed.footprint_width_m,
+                cut_m3=asset_cutfill.get("cut_m3"),
+                fill_m3=asset_cutfill.get("fill_m3"),
+                # Phase E: Enhanced terrain metrics
+                aspect_deg=placed.aspect_deg if placed.aspect_deg >= 0 else None,
+                suitability_score=placed.suitability_score,
+                rotation_deg=placed.rotation_deg,
             ))
         
         # Create Road records with grade data
@@ -548,7 +1084,7 @@ async def get_layout(
     result = await db.execute(
         select(Layout)
         .options(selectinload(Layout.assets), selectinload(Layout.roads))
-        .join(Site)
+        .join(Site, Layout.site_id == Site.id)
         .where(
             Layout.id == layout_id,
             Site.owner_id == current_user.id,
@@ -626,32 +1162,39 @@ async def list_layouts(
     
     Optionally filter by site_id.
     """
-    query = (
-        select(Layout)
-        .join(Site)
-        .where(Site.owner_id == current_user.id)
-        .order_by(Layout.created_at.desc())
-    )
-    
-    if site_id:
-        query = query.where(Layout.site_id == site_id)
-    
-    result = await db.execute(query)
-    layouts = result.scalars().all()
-    
-    return LayoutListResponse(
-        layouts=[
-            {
-                "id": layout.id,
-                "site_id": layout.site_id,
-                "status": layout.status,
-                "total_capacity_kw": layout.total_capacity_kw,
-                "created_at": layout.created_at,
-            }
-            for layout in layouts
-        ],
-        total=len(layouts),
-    )
+    try:
+        query = (
+            select(Layout)
+            .join(Site, Layout.site_id == Site.id)
+            .where(Site.owner_id == current_user.id)
+            .order_by(Layout.created_at.desc())
+        )
+        
+        if site_id:
+            query = query.where(Layout.site_id == site_id)
+        
+        result = await db.execute(query)
+        layouts = result.scalars().all()
+        
+        return LayoutListResponse(
+            layouts=[
+                {
+                    "id": layout.id,
+                    "site_id": layout.site_id,
+                    "status": layout.status,
+                    "total_capacity_kw": layout.total_capacity_kw,
+                    "created_at": layout.created_at,
+                }
+                for layout in layouts
+            ],
+            total=len(layouts),
+        )
+    except Exception as e:
+        logger.exception(f"Failed to list layouts for user {current_user.id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error listing layouts: {str(e)}. Have migrations been run?",
+        )
 
 
 # =============================================================================
@@ -685,7 +1228,7 @@ async def get_layout_status(
     # Query layout with ownership check through site
     result = await db.execute(
         select(Layout)
-        .join(Site)
+        .join(Site, Layout.site_id == Site.id)
         .where(
             Layout.id == layout_id,
             Site.owner_id == current_user.id,
@@ -749,7 +1292,7 @@ async def delete_layout(
     # Query layout with ownership check through site
     result = await db.execute(
         select(Layout)
-        .join(Site)
+        .join(Site, Layout.site_id == Site.id)
         .where(
             Layout.id == layout_id,
             Site.owner_id == current_user.id,

@@ -246,6 +246,8 @@ from app.api.auth import get_current_user
 from app.api.layouts import router as layouts_router
 from app.api.sites import router as sites_router
 from app.api.exports import router as exports_router
+from app.api.terrain import router as terrain_router
+from app.api.exclusion_zones import router as exclusion_zones_router
 from app.models.user import User
 from fastapi import Depends
 
@@ -253,6 +255,8 @@ from fastapi import Depends
 app.include_router(sites_router)
 app.include_router(layouts_router)
 app.include_router(exports_router)  # Phase B export endpoints
+app.include_router(terrain_router)  # Phase D terrain visualization endpoints
+app.include_router(exclusion_zones_router)  # Phase D-03 exclusion zones
 
 
 @app.get("/api/me", tags=["Auth"])
@@ -283,3 +287,14 @@ async def get_me(user: User = Depends(get_current_user)) -> dict:
 # - GET /api/layouts/{id}/export/geojson (B-08)
 # - GET /api/layouts/{id}/export/kmz (B-09)
 # - GET /api/layouts/{id}/export/pdf (B-10)
+# Phase D:
+# - GET /api/sites/{id}/terrain/summary (D-01)
+# - GET /api/sites/{id}/terrain/contours (D-01)
+# - GET /api/sites/{id}/terrain/buildable-area (D-01)
+# - GET /api/sites/{id}/terrain/slope-heatmap (D-01)
+# - GET /api/layouts/{id}/export/csv (D-04)
+# - GET /api/sites/exclusion-zone-types (D-03)
+# - GET /api/sites/{id}/exclusion-zones (D-03)
+# - POST /api/sites/{id}/exclusion-zones (D-03)
+# - PUT /api/sites/{id}/exclusion-zones/{zone_id} (D-03)
+# - DELETE /api/sites/{id}/exclusion-zones/{zone_id} (D-03)

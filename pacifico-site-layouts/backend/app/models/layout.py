@@ -78,9 +78,11 @@ class Layout(Base, UUIDMixin, TimestampMixin):
         nullable=False,
         index=True,
     )
+    # D-05-06: Explicit foreign_keys needed because Site also has preferred_layout_id FK
     site: Mapped["Site"] = relationship(
         "Site",
         back_populates="layouts",
+        primaryjoin="Layout.site_id == Site.id",
     )
     
     # Assets in this layout

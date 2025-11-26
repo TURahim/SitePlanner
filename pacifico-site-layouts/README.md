@@ -244,9 +244,23 @@ The application follows a three-phase MVP approach:
    - ✅ Frontend polling for status (C-05)
    - ✅ Lifecycle policies, security hardening, monitoring (C-06 to C-10)
 
+4. **Phase D** — Terrain visualization, exclusion zones, layout variants ✅ **COMPLETE** (100%)
+   - ✅ D-01: Terrain visualization (slope heatmap, contours, buildable areas) — COMPLETE
+   - ✅ D-02: Cut/fill volume display with net earthwork indicators — COMPLETE
+   - ✅ D-03: Exclusion zones & buffers (Leaflet Draw, CRUD API, layout integration) — COMPLETE
+   - ✅ D-04: Export functionality completion (terrain in PDF, CSV export, filenames) — COMPLETE
+   - ✅ D-05: Layout variants & comparison (4 strategies, comparison table, variant tabs) — COMPLETE
+
 See `MVP_Task_List.md` in the project root for detailed task breakdown and progress tracking.
+See `PHASE_D_PROGRESS.md` in the project root for current Phase D implementation details.
 
 ## Phase C: Async Jobs + Hardening (10/10 tasks, 100% ✅)
+
+**Status:** Complete — All tasks delivered on schedule
+
+## Phase D: Terrain Visualization & Advanced Features (6/6 tasks, 100% ✅)
+
+**Status:** COMPLETE — All features delivered ahead of schedule
 
 **Infrastructure Enhancements:**
 - ✅ **C-01**: SQS queue with DLQ (5-min visibility timeout, 3 max retries)
@@ -355,6 +369,35 @@ backend_env_vars = {
 4. ✅ **C-04** - Add GET /api/layouts/{id}/status endpoint for polling (completed)
 5. ✅ **C-05** - Implement polling on frontend for layout status (completed)
 6. ✅ **C-06 to C-10** - Security hardening & monitoring (completed)
+
+**Phase D Implementation (✅ COMPLETE - 100%):**
+1. ✅ **D-01** - Terrain visualization layer with slope heatmap, contours, buildable areas (Nov 25)
+   - 4 new REST endpoints with terrain data visualization
+   - Scikit-image contour extraction + rasterio polygon vectorization
+   - Interactive map layers with dynamic legends
+2. ✅ **D-02** - Cut/fill volume display in sidebar with net earthwork indicators (Nov 25)
+   - Earthwork section showing cut/fill totals in thousands-separator format
+   - Export/Import/Balanced net earthwork indicators with color coding
+   - Per-asset grading display in popups (↑Cut / ↓Fill)
+3. ✅ **D-03** - Exclusion zones & buffers with drawing UI (Nov 25)
+   - New ExclusionZone model with CRUD API endpoints
+   - Leaflet Draw integration for polygon creation on map
+   - Zone type modal with Environmental, Regulatory, Infrastructure, Safety, Custom types
+   - Layout generator respects exclusion zones (buildable mask integration)
+   - Zone list panel with expand/collapse, edit, delete functionality
+4. ✅ **D-04** - Export functionality completion (Nov 25)
+   - PDF includes terrain analysis summary (slope stats, buildable area %)
+   - GeoJSON includes terrain metadata per feature (slope suitability, grade class)
+   - KMZ includes slope/buildability styling with color-coded roads
+   - NEW: CSV export for tabular asset/road data
+   - Filenames now include site name + timestamp
+5. ✅ **D-05** - Layout variants & comparison (Nov 25)
+   - 4 optimization strategies: Balanced, Density, Low Earthwork, Clustered
+   - New `/api/layouts/generate-variants` endpoint generates all variants at once
+   - Strategy-specific generator configs (spacing, slope weight, capacity multiplier)
+   - Variant tabs UI with best-in-category badges
+   - Expandable comparison table showing all metrics across variants
+5. ⏳ **D-05** - Layout variants & comparison with multiple strategies
 
 **Testing:**
 - ✅ All 22 backend tests passing in <1 second

@@ -1,6 +1,16 @@
 """
 Pydantic schemas for API request/response models.
 """
+from app.schemas.exclusion_zone import (
+    ExclusionZoneCreate,
+    ExclusionZoneListResponse,
+    ExclusionZoneResponse,
+    ExclusionZoneType,
+    ExclusionZoneTypeInfo,
+    ExclusionZoneTypesResponse,
+    ExclusionZoneUpdate,
+    ZONE_TYPE_INFO,
+)
 from app.schemas.layout import (
     AssetResponse,
     GenerateLayoutRequest,
@@ -33,4 +43,13 @@ __all__ = [
     "LayoutListResponse",
     "AssetResponse",
     "RoadResponse",
+    # Exclusion zone schemas (D-03)
+    "ExclusionZoneCreate",
+    "ExclusionZoneUpdate",
+    "ExclusionZoneResponse",
+    "ExclusionZoneListResponse",
+    "ExclusionZoneType",
+    "ExclusionZoneTypeInfo",
+    "ExclusionZoneTypesResponse",
+    "ZONE_TYPE_INFO",
 ]
