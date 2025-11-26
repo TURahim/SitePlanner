@@ -4,27 +4,32 @@ Site management API endpoints.
 Handles site upload, retrieval, and listing.
 
 D-05-06: Added preferred layout management endpoint.
+Phase 2 (GAP): Added regulatory-sync endpoint for auto-populating exclusion zones.
 """
 import json
 import logging
-from typing import Annotated, Optional
+from typing import Annotated, Any, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
-from geoalchemy2.functions import ST_Area, ST_AsGeoJSON, ST_GeomFromText, ST_SetSRID
-from pydantic import BaseModel
+from geoalchemy2.functions import ST_Area, ST_AsGeoJSON, ST_GeomFromText, ST_SetSRID, ST_Transform
+from pydantic import BaseModel, Field
+from shapely import wkt
+from shapely.geometry import shape
 from sqlalchemy import cast, select
 from geoalchemy2 import Geography
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_user
 from app.database import get_db
+from app.models.exclusion_zone import ExclusionZone
 from app.models.layout import Layout
 from app.models.site import Site
 from app.models.user import User
 from app.schemas.site import SiteListResponse, SiteResponse, SiteUploadResponse
-from app.schemas.exclusion_zone import ExclusionZoneTypesResponse, ZONE_TYPE_INFO
+from app.schemas.exclusion_zone import ExclusionZoneTypesResponse, ExclusionZoneResponse, ZONE_TYPE_INFO
 from app.services.kml_parser import KMLParseError, KMLParser
+from app.services.regulatory_service import get_regulatory_service, RegulatoryLayerType
 from app.services.s3 import get_s3_service
 
 
@@ -43,6 +48,49 @@ class PreferredLayoutResponse(BaseModel):
     site_id: UUID
     preferred_layout_id: Optional[UUID]
     message: str
+
+
+# =============================================================================
+# Phase 2 (GAP): Regulatory Sync Schemas
+# =============================================================================
+
+
+class RegulatoryLayerInfo(BaseModel):
+    """Information about a regulatory data layer."""
+    type: str
+    name: str
+    zone_type: str
+    default_buffer_m: float
+    default_cost_multiplier: float
+    description: str
+
+
+class RegulatorySyncRequest(BaseModel):
+    """Request schema for regulatory data sync."""
+    layer_types: Optional[list[str]] = Field(
+        None,
+        description="List of layer types to sync (None = all available)",
+        examples=[["wetland", "floodplain", "setback"]]
+    )
+    replace_existing: bool = Field(
+        False,
+        description="If true, delete existing auto-synced zones before creating new ones"
+    )
+
+
+class RegulatorySyncResponse(BaseModel):
+    """Response schema for regulatory data sync."""
+    site_id: UUID
+    zones_created: int
+    zones_deleted: int = 0
+    zones: list[ExclusionZoneResponse]
+    message: str
+
+
+class RegulatoryLayersResponse(BaseModel):
+    """Response schema for available regulatory layers."""
+    layers: list[RegulatoryLayerInfo]
+
 
 logger = logging.getLogger(__name__)
 
@@ -321,6 +369,197 @@ async def delete_site(
     await db.commit()
     
     logger.info(f"Deleted site {site_id} for user {current_user.email}")
+
+
+# =============================================================================
+# Phase 2 (GAP): Regulatory Data Integration
+# =============================================================================
+
+
+@router.get(
+    "/regulatory-layers",
+    response_model=RegulatoryLayersResponse,
+    summary="Get available regulatory layers",
+    description="Phase 2: Returns available regulatory data layers that can be synced.",
+)
+async def get_regulatory_layers() -> RegulatoryLayersResponse:
+    """
+    Get available regulatory data layers (Phase 2).
+    
+    Returns information about layer types that can be fetched via regulatory-sync.
+    """
+    service = get_regulatory_service()
+    layers = service.get_available_layers()
+    
+    return RegulatoryLayersResponse(
+        layers=[RegulatoryLayerInfo(**layer) for layer in layers]
+    )
+
+
+@router.post(
+    "/{site_id}/regulatory-sync",
+    response_model=RegulatorySyncResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Sync regulatory data",
+    description="Phase 2: Fetch regulatory/environmental data and create exclusion zones.",
+)
+async def sync_regulatory_data(
+    site_id: UUID,
+    request: RegulatorySyncRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> RegulatorySyncResponse:
+    """
+    Sync regulatory data for a site (Phase 2 GAP Implementation).
+    
+    Fetches regulatory and environmental constraint data (e.g., wetlands,
+    flood zones, setbacks) and creates corresponding exclusion zones.
+    
+    **Layer Types:**
+    - `wetland`: NWI wetland areas
+    - `floodplain`: FEMA flood zones
+    - `setback`: Property line setbacks
+    - `utility_corridor`: Existing utility corridors
+    
+    **Note:** Currently uses mock data for development. Real API integrations
+    (FEMA, NWI, etc.) will be added in future iterations.
+    
+    Parameters:
+    - **site_id**: UUID of the site
+    - **layer_types**: Optional list of layer types (None = all)
+    - **replace_existing**: If true, deletes existing synced zones first
+    """
+    # Verify site ownership
+    result = await db.execute(
+        select(Site).where(
+            Site.id == site_id,
+            Site.owner_id == current_user.id,
+        )
+    )
+    site = result.scalar_one_or_none()
+    
+    if not site:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Site not found",
+        )
+    
+    # Get site boundary as Shapely polygon
+    boundary_wkt_result = await db.execute(
+        select(Site.boundary.ST_AsText()).where(Site.id == site.id)
+    )
+    boundary_wkt = boundary_wkt_result.scalar()
+    
+    if not boundary_wkt:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Site has no boundary geometry",
+        )
+    
+    try:
+        boundary = wkt.loads(boundary_wkt)
+    except Exception as e:
+        logger.error(f"Failed to parse site boundary: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to parse site boundary",
+        )
+    
+    # Optionally delete existing synced zones
+    zones_deleted = 0
+    if request.replace_existing:
+        # Delete zones that were created by regulatory sync (have description starting with mock/regulatory source)
+        # For now, we'll delete all zones with certain names pattern
+        existing_result = await db.execute(
+            select(ExclusionZone).where(
+                ExclusionZone.site_id == site_id,
+                ExclusionZone.description.like("%Mock%") | 
+                ExclusionZone.description.like("%FEMA%") |
+                ExclusionZone.description.like("%NWI%")
+            )
+        )
+        existing_zones = existing_result.scalars().all()
+        for zone in existing_zones:
+            await db.delete(zone)
+            zones_deleted += 1
+        
+        if zones_deleted > 0:
+            await db.flush()
+            logger.info(f"Deleted {zones_deleted} existing synced zones for site {site_id}")
+    
+    # Fetch regulatory data
+    service = get_regulatory_service()
+    zone_data_list = await service.sync_regulatory_data(
+        site_id=site_id,
+        boundary=boundary,
+        layer_types=request.layer_types,
+    )
+    
+    # Create exclusion zone records
+    created_zones = []
+    for zone_data in zone_data_list:
+        geometry_geojson = zone_data.pop("geometry")
+        zone_site_id = zone_data.pop("site_id")
+        
+        # Convert GeoJSON to WKT for PostGIS
+        try:
+            geom_shape = shape(geometry_geojson)
+            geom_wkt = geom_shape.wkt
+        except Exception as e:
+            logger.warning(f"Failed to convert geometry: {e}")
+            continue
+        
+        # Calculate area
+        area_m2 = geom_shape.area * (111000 ** 2)  # Approximate conversion from degrees²
+        
+        zone = ExclusionZone(
+            site_id=zone_site_id,
+            name=zone_data["name"],
+            zone_type=zone_data["zone_type"],
+            geometry=ST_SetSRID(ST_GeomFromText(geom_wkt), 4326),
+            buffer_m=zone_data["buffer_m"],
+            cost_multiplier=zone_data["cost_multiplier"],
+            description=zone_data.get("description"),
+            area_m2=area_m2,
+        )
+        db.add(zone)
+        await db.flush()
+        
+        # Get geometry as GeoJSON for response
+        geojson_result = await db.execute(
+            select(ST_AsGeoJSON(ExclusionZone.geometry)).where(ExclusionZone.id == zone.id)
+        )
+        geometry_json = json.loads(geojson_result.scalar() or "{}")
+        
+        created_zones.append(ExclusionZoneResponse(
+            id=zone.id,
+            site_id=zone.site_id,
+            name=zone.name,
+            zone_type=zone.zone_type,
+            geometry=geometry_json,
+            buffer_m=zone.buffer_m,
+            cost_multiplier=zone.cost_multiplier,
+            description=zone.description,
+            area_m2=zone.area_m2,
+            color=zone.color,
+            created_at=zone.created_at,
+            updated_at=zone.updated_at,
+        ))
+    
+    await db.commit()
+    
+    logger.info(
+        f"Regulatory sync for site {site_id}: created {len(created_zones)} zones, "
+        f"deleted {zones_deleted} existing"
+    )
+    
+    return RegulatorySyncResponse(
+        site_id=site_id,
+        zones_created=len(created_zones),
+        zones_deleted=zones_deleted,
+        zones=created_zones,
+        message=f"Created {len(created_zones)} exclusion zones from regulatory data",
+    )
 
 
 # =============================================================================

@@ -1,42 +1,34 @@
-# Progress Log
 
-## Phase E: Layout Algorithm Enhancements
-
-### Session: Nov 26, 2025
+### Session: Nov 26, 2025 (Part 3)
 
 #### Completed
-- [x] Created `TerrainAnalysisService` with:
-  - Composite suitability scoring
-  - DEM Gaussian smoothing
-  - Horn's method slope/aspect calculation
-  - Profile and plan curvature computation
-  - Terrain roughness index
-  - Morphological filtering for buildable masks
-
-- [x] Enhanced `TerrainAwareLayoutGenerator`:
-  - Added Poisson-disk sampling for candidate positions
-  - Implemented multi-factor position scoring
-  - Added aspect-based solar panel rotation
-  - Added true rectangular footprint geometry
-
-- [x] Implemented MST road network:
-  - Prim's algorithm with terrain-weighted distances
-  - Configurable per strategy
-  - Falls back to star topology when disabled
-
-- [x] Extended earthwork calculation:
-  - Road corridor cut/fill estimation
-  - Net balance reporting
-  - Enhanced GeoJSON output with all metrics
-
-#### New Files
-- `backend/app/services/terrain_analysis_service.py`
+- [x] Fixed `IndentationError` in `pacifico-site-layouts/backend/app/services/terrain_layout_generator.py`.
+  - Corrected mixed indentation in `_generate_mst_roads` method.
+  - Ensured `_create_road_segment` calls are properly nested within logic blocks.
 
 #### Modified Files
 - `backend/app/services/terrain_layout_generator.py`
 
-#### Next Steps
-- Integrate `TerrainAnalysisService` into layout generation API
-- Add frontend visualization for new metrics
-- Test with real site data
-- Consider local search optimization for placement refinement
+### Session: Nov 26, 2025 (Part 4)
+
+#### Completed
+- [x] Added persistent caching for terrain visualization overlays (slope heatmap, contour lines, buildable areas).
+  - Extended `TerrainCache` with `variant_key` column and new terrain types.
+  - Implemented S3 JSON caching in `TerrainVisualizationService`.
+  - Added Alembic migration `005_terrain_cache_variant_key.py`.
+
+#### Modified Files
+- `backend/app/models/terrain_cache.py`
+- `backend/app/services/dem_service.py`
+- `backend/app/services/slope_service.py`
+- `backend/app/services/terrain_visualization_service.py`
+- `backend/alembic/versions/005_terrain_cache_variant_key.py`
+
+### Session: Nov 26, 2025 (Part 5)
+
+#### Completed
+- [x] Hardened layout export pipeline so PDF/KMZ/CSV generation survives missing numeric metrics.
+  - Added `_safe_number` helper throughout `export_service` to sanitize `None` values before formatting strings or writing CSV/ReportLab content, eliminating the “Failed to export PDF” crash.
+  - Updated KMZ, PDF, and CSV export paths to reuse the helper for asset capacities, cut/fill stats, terrain summaries, and road metadata.
+  - Introduced `tests/test_export_service.py` with async unit tests that mock S3 to verify `export_pdf`/`export_csv` behave when layout metrics are missing.
+  - Ran `pytest tests/test_export_service.py` (2 tests passing).

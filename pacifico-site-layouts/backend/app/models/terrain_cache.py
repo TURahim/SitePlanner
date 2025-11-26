@@ -17,9 +17,12 @@ if TYPE_CHECKING:
 
 class TerrainType(str, Enum):
     """Types of terrain data that can be cached."""
-    ELEVATION = "elevation"  # DEM raster
-    SLOPE = "slope"          # Slope raster (degrees)
-    ASPECT = "aspect"        # Aspect raster (direction)
+    ELEVATION = "elevation"        # DEM raster
+    SLOPE = "slope"                # Slope raster (degrees)
+    ASPECT = "aspect"              # Aspect raster (direction)
+    CONTOURS = "contours"          # Generated contour GeoJSON
+    SLOPE_HEATMAP = "slope_heatmap"  # Slope zone polygons
+    BUILDABLE_AREA = "buildable_area"  # Buildable area polygons
 
 
 class TerrainCache(Base, UUIDMixin, TimestampMixin):
@@ -36,6 +39,13 @@ class TerrainCache(Base, UUIDMixin, TimestampMixin):
     terrain_type: Mapped[str] = mapped_column(
         String(50),
         nullable=False,
+        index=True,
+    )
+    
+    # Variant key for parameterized caches (e.g., asset type, interval)
+    variant_key: Mapped[Optional[str]] = mapped_column(
+        String(255),
+        nullable=True,
         index=True,
     )
     
@@ -70,5 +80,6 @@ class TerrainCache(Base, UUIDMixin, TimestampMixin):
     )
     
     def __repr__(self) -> str:
-        return f"<TerrainCache {self.terrain_type} for site {self.site_id}>"
+        variant = f" ({self.variant_key})" if self.variant_key else ""
+        return f"<TerrainCache {self.terrain_type}{variant} for site {self.site_id}>"
 

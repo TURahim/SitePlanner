@@ -4,16 +4,18 @@ Layout management API endpoints.
 Handles layout generation, retrieval, and listing.
 Supports both dummy placement (Phase A) and terrain-aware placement (Phase B).
 Supports async job queuing for layout generation (Phase C).
+Phase 3 (GAP): Added asset manipulation endpoints.
 """
 import json
 import logging
 from typing import Any
 from uuid import UUID
 
+import numpy as np
 from fastapi import APIRouter, Depends, HTTPException, status
 from geoalchemy2.functions import ST_AsGeoJSON, ST_GeomFromText, ST_Length, ST_SetSRID
 from shapely import wkt
-from shapely.geometry import mapping, shape
+from shapely.geometry import mapping, shape, Point
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -44,6 +46,13 @@ from app.schemas.layout import (
     RoadResponse,
     STRATEGY_INFO_LIST,
     VariantComparison,
+    # Phase 3 (GAP): Asset manipulation schemas
+    AssetMoveRequest,
+    AssetMoveResponse,
+    RecomputeRoadsRequest,
+    RecomputeRoadsResponse,
+    RecomputeEarthworkRequest,
+    RecomputeEarthworkResponse,
 )
 # Phase A: Dummy layout generator
 from app.services.layout_generator import DummyLayoutGenerator
@@ -51,9 +60,12 @@ from app.services.layout_generator import DummyLayoutGenerator
 from app.services.dem_service import get_dem_service
 from app.services.slope_service import get_slope_service
 # D-05: Import LayoutStrategy enum from generator for strategy mapping
+# Phase 3: Also import PlacedAsset/PlacedRoad for recompute operations
 from app.services.terrain_layout_generator import (
     TerrainAwareLayoutGenerator,
     LayoutStrategy as GeneratorStrategy,
+    PlacedAsset,
+    PlacedRoad,
 )
 # Phase E: Enhanced terrain analysis
 from app.services.terrain_analysis_service import (
@@ -419,7 +431,10 @@ async def _generate_variant(
         num_assets=num_assets,
         exclusion_zones=exclusion_zones,
         aspect_array=terrain_metrics.aspect_deg,
+        curvature_array=terrain_metrics.curvature,
+        plan_curvature_array=terrain_metrics.plan_curvature,
         suitability_scores=suitability_scores,
+        entry_point=shape(site.entry_point) if site.entry_point else None,
     )
     
     # Create Layout record
@@ -489,29 +504,37 @@ async def _generate_variant(
     total_road_length = 0.0
     
     for placed in placed_roads:
-        road = Road(
-            layout_id=layout.id,
-            name=placed.name,
-            geometry=ST_SetSRID(
-                ST_GeomFromText(placed.geometry.wkt),
-                4326
-            ),
-            length_m=placed.length_m,
-            width_m=placed.width_m,
-            max_grade_pct=placed.max_grade_pct,
-        )
-        db.add(road)
-        await db.flush()
-        
-        total_road_length += placed.length_m or 0
-        
-        road_responses.append(RoadResponse(
-            id=road.id,
-            name=road.name,
-            length_m=road.length_m,
-            max_grade_pct=road.max_grade_pct,
-            geometry=mapping(placed.geometry),
-        ))
+            road = Road(
+                layout_id=layout.id,
+                name=placed.name,
+                geometry=ST_SetSRID(
+                    ST_GeomFromText(placed.geometry.wkt),
+                    4326
+                ),
+                length_m=placed.length_m,
+                width_m=placed.width_m,
+                max_grade_pct=placed.max_grade_pct,
+                road_class=placed.road_class,
+                max_cumulative_cost=placed.max_cumulative_cost,
+                stationing_json={"data": placed.stationing} if placed.stationing else None,
+                kpi_flags={"flags": placed.kpi_flags} if placed.kpi_flags else None,
+            )
+            db.add(road)
+            await db.flush()
+            
+            total_road_length += placed.length_m or 0
+            
+            road_responses.append(RoadResponse(
+                id=road.id,
+                name=road.name,
+                length_m=road.length_m,
+                max_grade_pct=road.max_grade_pct,
+                geometry=mapping(placed.geometry),
+                road_class=placed.road_class,
+                max_cumulative_cost=placed.max_cumulative_cost,
+                stationing_json={"data": placed.stationing} if placed.stationing else None,
+                kpi_flags={"flags": placed.kpi_flags} if placed.kpi_flags else None,
+            ))
     
     # Update layout with totals
     layout.total_capacity_kw = round(total_capacity, 1)
@@ -593,19 +616,12 @@ def _build_variant_comparison(metrics: list[LayoutVariantMetrics]) -> VariantCom
 # =============================================================================
 
 
-async def _fetch_exclusion_zones(site_id: UUID, db: AsyncSession) -> list:
+async def _fetch_exclusion_zones(site_id: UUID, db: AsyncSession) -> list[dict[str, Any]]:
     """
-    Fetch exclusion zones for a site as Shapely polygons.
+    Fetch exclusion zones for a site with metadata.
     
-    D-03: Retrieves all exclusion zones and converts them to polygons
-    with their buffers applied.
-    
-    Args:
-        site_id: UUID of the site
-        db: Database session
-        
     Returns:
-        List of Shapely Polygon objects with buffers applied
+        List of dicts with 'polygon' (Shapely) and 'cost_multiplier' (float)
     """
     from shapely.ops import unary_union
     
@@ -617,7 +633,7 @@ async def _fetch_exclusion_zones(site_id: UUID, db: AsyncSession) -> list:
     if not zones:
         return []
     
-    exclusion_polygons = []
+    exclusion_data = []
     
     for zone in zones:
         # Get geometry as GeoJSON
@@ -639,11 +655,14 @@ async def _fetch_exclusion_zones(site_id: UUID, db: AsyncSession) -> list:
                     polygon = polygon.buffer(buffer_deg)
                 
                 if polygon.is_valid and not polygon.is_empty:
-                    exclusion_polygons.append(polygon)
+                    exclusion_data.append({
+                        "polygon": polygon,
+                        "cost_multiplier": zone.cost_multiplier if hasattr(zone, 'cost_multiplier') else 1.0
+                    })
             except Exception as e:
                 logger.warning(f"Could not parse exclusion zone {zone.id}: {e}")
     
-    return exclusion_polygons
+    return exclusion_data
 
 
 async def _enqueue_layout_job(
@@ -799,7 +818,10 @@ async def _generate_terrain_aware_layout(
             num_assets=num_assets,
             exclusion_zones=exclusion_zones,
             aspect_array=terrain_metrics.aspect_deg,
+            curvature_array=terrain_metrics.curvature,
+            plan_curvature_array=terrain_metrics.plan_curvature,
             suitability_scores=suitability_scores,
+            entry_point=shape(site.entry_point) if site.entry_point else None,
         )
         
         # Update layout with terrain flag and cut/fill
@@ -876,6 +898,10 @@ async def _generate_terrain_aware_layout(
                 length_m=placed.length_m,
                 width_m=placed.width_m,
                 max_grade_pct=placed.max_grade_pct,
+                road_class=placed.road_class,
+                max_cumulative_cost=placed.max_cumulative_cost,
+                stationing_json={"data": placed.stationing} if placed.stationing else None,
+                kpi_flags={"flags": placed.kpi_flags} if placed.kpi_flags else None,
             )
             db.add(road)
             await db.flush()
@@ -888,6 +914,10 @@ async def _generate_terrain_aware_layout(
                 length_m=road.length_m,
                 max_grade_pct=road.max_grade_pct,
                 geometry=mapping(placed.geometry),
+                road_class=placed.road_class,
+                max_cumulative_cost=placed.max_cumulative_cost,
+                stationing_json={"data": placed.stationing} if placed.stationing else None,
+                kpi_flags={"flags": placed.kpi_flags} if placed.kpi_flags else None,
             ))
         
         # Update layout with totals
@@ -1206,7 +1236,7 @@ async def list_layouts(
     "/{layout_id}/status",
     response_model=LayoutStatusResponse,
     summary="Get layout status (polling)",
-    description="Poll for layout generation status. Used by frontend to track async jobs (C-04).",
+    description="Poll for layout generation status. Used by frontend to track async jobs (C-04, Phase 4).",
 )
 async def get_layout_status(
     layout_id: UUID,
@@ -1214,12 +1244,15 @@ async def get_layout_status(
     current_user: User = Depends(get_current_user),
 ) -> LayoutStatusResponse:
     """
-    Get the current status of a layout generation job (C-04).
+    Get the current status of a layout generation job (C-04, enhanced Phase 4).
     
     Returns 404 if the layout doesn't exist or belongs to another user.
     
     Polling response includes:
     - status: queued, processing, completed, or failed
+    - stage: Current generation stage (e.g., 'fetching_dem', 'placing_assets')
+    - progress_pct: Progress percentage (0-100)
+    - stage_message: Human-readable description of current stage
     - error_message: Details if status is 'failed'
     - Metrics (when status='completed'): capacity, asset_count, road_length, volumes
     
@@ -1242,12 +1275,16 @@ async def get_layout_status(
             detail="Layout not found",
         )
     
-    # If not completed, return minimal status
+    # If not completed, return status with progress info
     if layout.status != LayoutStatus.COMPLETED.value:
         return LayoutStatusResponse(
             layout_id=layout.id,
             status=layout.status,
             error_message=layout.error_message if layout.status == LayoutStatus.FAILED.value else None,
+            # Phase 4: Progress tracking
+            stage=layout.stage,
+            progress_pct=layout.progress_pct,
+            stage_message=layout.stage_message,
         )
     
     # If completed, calculate additional metrics
@@ -1267,6 +1304,10 @@ async def get_layout_status(
         layout_id=layout.id,
         status=layout.status,
         error_message=None,
+        # Phase 4: Completed status
+        stage="completed",
+        progress_pct=100,
+        stage_message="Layout generation complete",
         total_capacity_kw=layout.total_capacity_kw,
         asset_count=asset_count,
         road_length_m=total_road_length,
@@ -1311,6 +1352,601 @@ async def delete_layout(
     await db.commit()
     
     logger.info(f"Deleted layout {layout_id}")
+
+
+# =============================================================================
+# Phase 3 (GAP): Asset Manipulation Endpoints
+# =============================================================================
+
+
+@router.patch(
+    "/{layout_id}/assets/{asset_id}",
+    response_model=AssetMoveResponse,
+    summary="Move asset",
+    description="Phase 3: Move an asset to a new position and optionally recompute local terrain metrics.",
+)
+async def move_asset(
+    layout_id: UUID,
+    asset_id: UUID,
+    request: AssetMoveRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AssetMoveResponse:
+    """
+    Move an asset to a new position (Phase 3 GAP Implementation).
+    
+    Validates that the new position:
+    - Is within the site boundary
+    - Is not in a hard exclusion zone
+    
+    If recompute_local=True (default), re-evaluates:
+    - Slope at new position
+    - Elevation at new position
+    - Suitability score
+    - Per-asset cut/fill (local window only)
+    
+    **Note:** After moving assets, call `/roads/recompute` to update road network.
+    """
+    # Query layout with ownership check
+    result = await db.execute(
+        select(Layout)
+        .join(Site, Layout.site_id == Site.id)
+        .where(
+            Layout.id == layout_id,
+            Site.owner_id == current_user.id,
+        )
+    )
+    layout = result.scalar_one_or_none()
+    
+    if not layout:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Layout not found",
+        )
+    
+    # Query the asset
+    asset_result = await db.execute(
+        select(Asset).where(
+            Asset.id == asset_id,
+            Asset.layout_id == layout_id,
+        )
+    )
+    asset = asset_result.scalar_one_or_none()
+    
+    if not asset:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Asset not found in this layout",
+        )
+    
+    # Get site and boundary
+    site_result = await db.execute(
+        select(Site).where(Site.id == layout.site_id)
+    )
+    site = site_result.scalar_one_or_none()
+    
+    # Get boundary as WKT
+    boundary_wkt_result = await db.execute(
+        select(Site.boundary.ST_AsText()).where(Site.id == site.id)
+    )
+    boundary_wkt = boundary_wkt_result.scalar()
+    boundary = wkt.loads(boundary_wkt)
+    
+    # Validate new position is within boundary
+    new_lon = request.longitude
+    new_lat = request.latitude
+    new_point = shape(request.position)
+    
+    warnings = []
+    
+    if not boundary.contains(new_point):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="New position is outside site boundary",
+        )
+    
+    # Check exclusion zones
+    exclusion_zones = await _fetch_exclusion_zones(site.id, db)
+    for zone in exclusion_zones:
+        zone_poly = zone["polygon"]
+        multiplier = zone.get("cost_multiplier", 1.0)
+        
+        if multiplier >= 100 and zone_poly.contains(new_point):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="New position is within a hard exclusion zone",
+            )
+        elif multiplier > 1.0 and zone_poly.contains(new_point):
+            warnings.append(f"Position is in an avoidance zone (cost multiplier: {multiplier}x)")
+    
+    # Update position
+    asset.position = ST_SetSRID(
+        ST_GeomFromText(f"POINT({new_lon} {new_lat})"),
+        4326
+    )
+    
+    # Recompute local terrain metrics if requested
+    if request.recompute_local:
+        try:
+            dem_service = get_dem_service()
+            slope_service = get_slope_service()
+            
+            # Get cached terrain data
+            from app.models.terrain_cache import TerrainCache
+            cache_result = await db.execute(
+                select(TerrainCache).where(
+                    TerrainCache.site_id == site.id,
+                    TerrainCache.data_type == "dem",
+                )
+            )
+            dem_cache = cache_result.scalar_one_or_none()
+            
+            if dem_cache and dem_cache.s3_key:
+                # Load DEM and sample at new position
+                dem_array, dem_profile = await dem_service.get_dem_array(dem_cache.s3_key)
+                transform = dem_profile["transform"]
+                
+                from rasterio.transform import rowcol
+                row, col = rowcol(transform, new_lon, new_lat)
+                
+                if 0 <= row < dem_array.shape[0] and 0 <= col < dem_array.shape[1]:
+                    asset.elevation_m = float(dem_array[row, col])
+                    
+                    # Get slope
+                    slope_cache_result = await db.execute(
+                        select(TerrainCache).where(
+                            TerrainCache.site_id == site.id,
+                            TerrainCache.data_type == "slope",
+                        )
+                    )
+                    slope_cache = slope_cache_result.scalar_one_or_none()
+                    
+                    if slope_cache and slope_cache.s3_key:
+                        slope_array, _ = await slope_service.get_slope_array(slope_cache.s3_key)
+                        if 0 <= row < slope_array.shape[0] and 0 <= col < slope_array.shape[1]:
+                            asset.slope_deg = float(slope_array[row, col])
+                            
+                            # Check if slope exceeds limit
+                            slope_limit = TerrainAwareLayoutGenerator.SLOPE_LIMITS.get(asset.asset_type, 15.0)
+                            if asset.slope_deg > slope_limit:
+                                warnings.append(
+                                    f"Slope ({asset.slope_deg:.1f}°) exceeds limit for {asset.asset_type} ({slope_limit}°)"
+                                )
+        except Exception as e:
+            logger.warning(f"Failed to recompute terrain metrics: {e}")
+            warnings.append("Could not recompute terrain metrics")
+    
+    await db.commit()
+    await db.refresh(asset)
+    
+    # Get position as GeoJSON for response
+    pos_result = await db.execute(
+        select(ST_AsGeoJSON(Asset.position)).where(Asset.id == asset.id)
+    )
+    position_geojson = json.loads(pos_result.scalar() or "{}")
+    
+    logger.info(f"Moved asset {asset_id} to ({new_lon}, {new_lat})")
+    
+    return AssetMoveResponse(
+        asset=AssetResponse(
+            id=asset.id,
+            asset_type=asset.asset_type,
+            name=asset.name,
+            capacity_kw=asset.capacity_kw,
+            position=position_geojson,
+            elevation_m=asset.elevation_m,
+            slope_deg=asset.slope_deg,
+            footprint_length_m=asset.footprint_length_m,
+            footprint_width_m=asset.footprint_width_m,
+        ),
+        message="Asset moved successfully",
+        warnings=warnings,
+    )
+
+
+@router.post(
+    "/{layout_id}/roads/recompute",
+    response_model=RecomputeRoadsResponse,
+    summary="Recompute roads",
+    description="Phase 3: Regenerate road network based on current asset positions.",
+)
+async def recompute_roads(
+    layout_id: UUID,
+    request: RecomputeRoadsRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> RecomputeRoadsResponse:
+    """
+    Recompute road network for a layout (Phase 3 GAP Implementation).
+    
+    Regenerates all roads based on current asset positions using:
+    - A* pathfinding with slope-weighted cost surface
+    - MST or star topology based on layout strategy
+    - Entry point (if defined) for primary spine
+    
+    **Note:** This deletes existing roads and creates new ones.
+    Call `/earthwork/recompute` afterward to update earthwork volumes.
+    """
+    # Query layout with ownership check
+    result = await db.execute(
+        select(Layout)
+        .join(Site, Layout.site_id == Site.id)
+        .where(
+            Layout.id == layout_id,
+            Site.owner_id == current_user.id,
+        )
+    )
+    layout = result.scalar_one_or_none()
+    
+    if not layout:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Layout not found",
+        )
+    
+    # Get site
+    site_result = await db.execute(
+        select(Site).where(Site.id == layout.site_id)
+    )
+    site = site_result.scalar_one_or_none()
+    
+    # Load assets
+    assets_result = await db.execute(
+        select(Asset).where(Asset.layout_id == layout_id)
+    )
+    assets = assets_result.scalars().all()
+    
+    if len(assets) < 2:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Need at least 2 assets to generate roads",
+        )
+    
+    # Get terrain data
+    dem_service = get_dem_service()
+    slope_service = get_slope_service()
+    
+    # Get boundary
+    boundary_wkt_result = await db.execute(
+        select(Site.boundary.ST_AsText()).where(Site.id == site.id)
+    )
+    boundary_wkt = boundary_wkt_result.scalar()
+    boundary = wkt.loads(boundary_wkt)
+    
+    try:
+        # Get DEM and slope
+        dem_s3_key = await dem_service.get_dem_for_site(
+            site_id=site.id,
+            boundary=boundary,
+            db=db,
+            resolution_m=request.dem_resolution_m,
+        )
+        
+        if not dem_s3_key:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Could not load DEM data",
+            )
+        
+        slope_s3_key = await slope_service.get_slope_for_site(
+            site_id=site.id,
+            dem_s3_key=dem_s3_key,
+            db=db,
+        )
+        
+        if not slope_s3_key:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Could not compute slope data",
+            )
+        
+        dem_array, dem_profile = await dem_service.get_dem_array(dem_s3_key)
+        slope_array, _ = await slope_service.get_slope_array(slope_s3_key)
+        transform = dem_profile["transform"]
+        
+        # Calculate cell size
+        cell_size_x = abs(transform[0])
+        height, width = slope_array.shape
+        if cell_size_x < 1:
+            center_lat = transform[5] - (height / 2) * abs(transform[4])
+            lat_factor = np.cos(np.radians(abs(center_lat)))
+            cell_size_m = cell_size_x * 111000 * lat_factor
+        else:
+            cell_size_m = cell_size_x
+        
+        # Convert assets to PlacedAsset format
+        from rasterio.transform import rowcol
+        placed_assets = []
+        
+        for asset in assets:
+            pos_result = await db.execute(
+                select(ST_AsGeoJSON(Asset.position)).where(Asset.id == asset.id)
+            )
+            pos_json = json.loads(pos_result.scalar() or "{}")
+            coords = pos_json.get("coordinates", [0, 0])
+            
+            row, col = rowcol(transform, coords[0], coords[1])
+            
+            placed_assets.append(PlacedAsset(
+                asset_type=asset.asset_type,
+                name=asset.name,
+                position=Point(coords[0], coords[1]),
+                capacity_kw=asset.capacity_kw or 0,
+                elevation_m=asset.elevation_m or 0,
+                slope_deg=asset.slope_deg or 0,
+                grid_row=int(row),
+                grid_col=int(col),
+            ))
+        
+        # Get exclusion zones for allowance mask
+        exclusion_zones = await _fetch_exclusion_zones(site.id, db)
+        
+        # Generate roads using TerrainAwareLayoutGenerator
+        generator = TerrainAwareLayoutGenerator(target_capacity_kw=layout.total_capacity_kw or 1000)
+        
+        # Store arrays for road generation
+        generator._dem_array = dem_array
+        generator._slope_array = slope_array
+        generator._allowance_mask = np.ones_like(slope_array, dtype=np.float32)
+        
+        if exclusion_zones:
+            _, generator._allowance_mask = generator._process_exclusion_zones(
+                exclusion_zones=exclusion_zones,
+                transform=transform,
+                shape=slope_array.shape,
+            )
+        
+        generator._entry_point = shape(site.entry_point) if site.entry_point else None
+        
+        # Generate roads
+        placed_roads = generator._generate_roads_terrain_aware(
+            assets=placed_assets,
+            slope_array=slope_array,
+            transform=transform,
+            cell_size_m=cell_size_m,
+        )
+        
+        # Delete existing roads
+        await db.execute(
+            select(Road).where(Road.layout_id == layout_id)
+        )
+        existing_roads = await db.execute(
+            select(Road).where(Road.layout_id == layout_id)
+        )
+        for road in existing_roads.scalars().all():
+            await db.delete(road)
+        
+        await db.flush()
+        
+        # Create new road records
+        road_responses = []
+        total_length = 0.0
+        
+        for placed in placed_roads:
+            road = Road(
+                layout_id=layout.id,
+                name=placed.name,
+                geometry=ST_SetSRID(
+                    ST_GeomFromText(placed.geometry.wkt),
+                    4326
+                ),
+                length_m=placed.length_m,
+                width_m=placed.width_m,
+                max_grade_pct=placed.max_grade_pct,
+                road_class=placed.road_class,
+                max_cumulative_cost=placed.max_cumulative_cost,
+                stationing_json={"data": placed.stationing} if placed.stationing else None,
+                kpi_flags={"flags": placed.kpi_flags} if placed.kpi_flags else None,
+            )
+            db.add(road)
+            await db.flush()
+            
+            total_length += placed.length_m or 0
+            
+            road_responses.append(RoadResponse(
+                id=road.id,
+                name=road.name,
+                length_m=road.length_m,
+                max_grade_pct=road.max_grade_pct,
+                geometry=mapping(placed.geometry),
+                road_class=placed.road_class,
+                max_cumulative_cost=placed.max_cumulative_cost,
+                stationing_json={"data": placed.stationing} if placed.stationing else None,
+                kpi_flags={"flags": placed.kpi_flags} if placed.kpi_flags else None,
+            ))
+        
+        await db.commit()
+        
+        logger.info(f"Recomputed roads for layout {layout_id}: {len(road_responses)} roads, {total_length:.1f}m total")
+        
+        return RecomputeRoadsResponse(
+            layout_id=layout_id,
+            roads=road_responses,
+            road_count=len(road_responses),
+            total_length_m=round(total_length, 1),
+            message=f"Generated {len(road_responses)} roads",
+        )
+        
+    except Exception as e:
+        logger.exception(f"Failed to recompute roads: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to recompute roads: {e}",
+        )
+
+
+@router.post(
+    "/{layout_id}/earthwork/recompute",
+    response_model=RecomputeEarthworkResponse,
+    summary="Recompute earthwork",
+    description="Phase 3: Recalculate cut/fill volumes for current asset positions and roads.",
+)
+async def recompute_earthwork(
+    layout_id: UUID,
+    request: RecomputeEarthworkRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> RecomputeEarthworkResponse:
+    """
+    Recompute earthwork volumes for a layout (Phase 3 GAP Implementation).
+    
+    Recalculates cut/fill volumes based on:
+    - Current asset positions and footprints
+    - Current road geometries (if include_roads=True)
+    - DEM data
+    
+    Updates the layout record with new totals.
+    """
+    # Query layout with ownership check
+    result = await db.execute(
+        select(Layout)
+        .join(Site, Layout.site_id == Site.id)
+        .where(
+            Layout.id == layout_id,
+            Site.owner_id == current_user.id,
+        )
+    )
+    layout = result.scalar_one_or_none()
+    
+    if not layout:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Layout not found",
+        )
+    
+    # Get site
+    site_result = await db.execute(
+        select(Site).where(Site.id == layout.site_id)
+    )
+    site = site_result.scalar_one_or_none()
+    
+    # Get boundary
+    boundary_wkt_result = await db.execute(
+        select(Site.boundary.ST_AsText()).where(Site.id == site.id)
+    )
+    boundary_wkt = boundary_wkt_result.scalar()
+    boundary = wkt.loads(boundary_wkt)
+    
+    # Load assets and roads
+    assets_result = await db.execute(
+        select(Asset).where(Asset.layout_id == layout_id)
+    )
+    assets = assets_result.scalars().all()
+    
+    roads_result = await db.execute(
+        select(Road).where(Road.layout_id == layout_id)
+    )
+    roads = roads_result.scalars().all()
+    
+    # Get terrain data
+    dem_service = get_dem_service()
+    
+    try:
+        dem_s3_key = await dem_service.get_dem_for_site(
+            site_id=site.id,
+            boundary=boundary,
+            db=db,
+            resolution_m=10,
+        )
+        
+        if not dem_s3_key:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Could not load DEM data",
+            )
+        
+        dem_array, dem_profile = await dem_service.get_dem_array(dem_s3_key)
+        transform = dem_profile["transform"]
+        
+        # Calculate cell size
+        cell_size_x = abs(transform[0])
+        height, width = dem_array.shape
+        if cell_size_x < 1:
+            center_lat = transform[5] - (height / 2) * abs(transform[4])
+            lat_factor = np.cos(np.radians(abs(center_lat)))
+            cell_size_m = cell_size_x * 111000 * lat_factor
+        else:
+            cell_size_m = cell_size_x
+        
+        # Convert to PlacedAsset and PlacedRoad format
+        from rasterio.transform import rowcol
+        
+        placed_assets = []
+        for asset in assets:
+            pos_result = await db.execute(
+                select(ST_AsGeoJSON(Asset.position)).where(Asset.id == asset.id)
+            )
+            pos_json = json.loads(pos_result.scalar() or "{}")
+            coords = pos_json.get("coordinates", [0, 0])
+            
+            row, col = rowcol(transform, coords[0], coords[1])
+            
+            placed_assets.append(PlacedAsset(
+                asset_type=asset.asset_type,
+                name=asset.name,
+                position=Point(coords[0], coords[1]),
+                capacity_kw=asset.capacity_kw or 0,
+                elevation_m=asset.elevation_m or 0,
+                slope_deg=asset.slope_deg or 0,
+                grid_row=int(row),
+                grid_col=int(col),
+                footprint_length_m=asset.footprint_length_m or 20,
+                footprint_width_m=asset.footprint_width_m or 20,
+            ))
+        
+        placed_roads = []
+        if request.include_roads:
+            for road in roads:
+                geom_result = await db.execute(
+                    select(ST_AsGeoJSON(Road.geometry)).where(Road.id == road.id)
+                )
+                geom_json = json.loads(geom_result.scalar() or "{}")
+                
+                placed_roads.append(PlacedRoad(
+                    name=road.name,
+                    geometry=shape(geom_json),
+                    length_m=road.length_m or 0,
+                    width_m=road.width_m or 5.0,
+                ))
+        
+        # Compute cut/fill
+        generator = TerrainAwareLayoutGenerator()
+        cut_fill = generator._compute_cut_fill(
+            assets=placed_assets,
+            roads=placed_roads,
+            dem_array=dem_array,
+            transform=transform,
+            cell_size_m=cell_size_m,
+        )
+        
+        # Update layout
+        layout.cut_volume_m3 = cut_fill.cut_volume_m3
+        layout.fill_volume_m3 = cut_fill.fill_volume_m3
+        
+        await db.commit()
+        
+        logger.info(
+            f"Recomputed earthwork for layout {layout_id}: "
+            f"cut={cut_fill.cut_volume_m3:.0f}m³, fill={cut_fill.fill_volume_m3:.0f}m³"
+        )
+        
+        return RecomputeEarthworkResponse(
+            layout_id=layout_id,
+            cut_volume_m3=cut_fill.cut_volume_m3,
+            fill_volume_m3=cut_fill.fill_volume_m3,
+            road_cut_m3=cut_fill.road_cut_m3 if request.include_roads else None,
+            road_fill_m3=cut_fill.road_fill_m3 if request.include_roads else None,
+            net_earthwork_m3=cut_fill.net_balance_m3,
+            per_asset=cut_fill.per_asset,
+            message="Earthwork volumes recalculated",
+        )
+        
+    except Exception as e:
+        logger.exception(f"Failed to recompute earthwork: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to recompute earthwork: {e}",
+        )
 
 
 def random_asset_count(target_capacity_kw: float) -> int:

@@ -7,6 +7,7 @@ Generates terrain visualization data including:
 - Slope heatmap polygons
 - Terrain summary statistics
 """
+import json
 import logging
 from typing import Any, Optional
 from uuid import UUID
@@ -18,8 +19,10 @@ from rasterio.transform import Affine
 from scipy import ndimage
 from shapely.geometry import LineString, MultiLineString, MultiPolygon, Polygon, shape, mapping
 from shapely.ops import unary_union
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.terrain_cache import TerrainCache, TerrainType
 from app.services.dem_service import get_dem_service
 from app.services.slope_service import get_slope_service
 from app.services.s3 import get_s3_service
@@ -56,6 +59,94 @@ class TerrainVisualizationService:
         self._dem_service = get_dem_service()
         self._slope_service = get_slope_service()
         self._s3_service = get_s3_service()
+    
+    async def _get_cached_geojson(
+        self,
+        site_id: UUID,
+        terrain_type: TerrainType,
+        variant: str,
+        db: AsyncSession,
+    ) -> Optional[dict]:
+        """Retrieve cached GeoJSON from TerrainCache/S3."""
+        stmt = (
+            select(TerrainCache)
+            .where(TerrainCache.site_id == site_id)
+            .where(TerrainCache.terrain_type == terrain_type.value)
+            .where(TerrainCache.variant_key == variant)
+        )
+        result = await db.execute(stmt)
+        cache_entry = result.scalar_one_or_none()
+        
+        if not cache_entry:
+            return None
+        
+        if not await self._s3_service.terrain_file_exists(cache_entry.s3_key):
+            await db.delete(cache_entry)
+            await db.commit()
+            return None
+        
+        try:
+            data_bytes = await self._s3_service.download_terrain_file(cache_entry.s3_key)
+            return json.loads(data_bytes.decode("utf-8"))
+        except Exception as exc:
+            logger.warning(f"Failed to load cached {terrain_type.value} for site {site_id}: {exc}")
+            return None
+    
+    async def _cache_geojson(
+        self,
+        site_id: UUID,
+        terrain_type: TerrainType,
+        variant: str,
+        data: dict,
+        db: AsyncSession,
+    ) -> None:
+        """Persist GeoJSON output to S3 and TerrainCache."""
+        safe_variant = variant.replace(":", "_").replace("|", "_").replace("/", "_").replace(" ", "_")
+        s3_key = f"terrain/{site_id}/{terrain_type.value}_{safe_variant}.json"
+        try:
+            await self._s3_service.upload_json(s3_key, data)
+            await self._upsert_cache_entry(
+                site_id=site_id,
+                terrain_type=terrain_type,
+                variant=variant,
+                s3_key=s3_key,
+                db=db,
+            )
+        except Exception as exc:
+            logger.warning(f"Failed to cache {terrain_type.value} for site {site_id}: {exc}")
+
+    async def _upsert_cache_entry(
+        self,
+        site_id: UUID,
+        terrain_type: TerrainType,
+        variant: str,
+        s3_key: str,
+        db: AsyncSession,
+    ) -> None:
+        """Create or update TerrainCache entry for generated artifacts."""
+        stmt = (
+            select(TerrainCache)
+            .where(TerrainCache.site_id == site_id)
+            .where(TerrainCache.terrain_type == terrain_type.value)
+            .where(TerrainCache.variant_key == variant)
+        )
+        result = await db.execute(stmt)
+        entry = result.scalar_one_or_none()
+
+        if entry:
+            entry.s3_key = s3_key
+            entry.source = "generated"
+        else:
+            entry = TerrainCache(
+                site_id=site_id,
+                terrain_type=terrain_type.value,
+                s3_key=s3_key,
+                source="generated",
+                variant_key=variant,
+            )
+            db.add(entry)
+
+        await db.commit()
     
     async def get_terrain_summary(
         self,
@@ -208,6 +299,11 @@ class TerrainVisualizationService:
         Returns:
             GeoJSON FeatureCollection with contour LineStrings
         """
+        variant = f"interval:{interval_m:.2f}"
+        cached = await self._get_cached_geojson(site_id, TerrainType.CONTOURS, variant, db)
+        if cached:
+            return cached
+
         # Get DEM data
         dem_s3_key = await self._dem_service.get_dem_for_site(site_id, boundary, db)
         if not dem_s3_key:
@@ -270,7 +366,7 @@ class TerrainVisualizationService:
                 except Exception as e:
                     logger.warning(f"Could not clip contour at {elevation}m: {e}")
         
-        return {
+        result = {
             "site_id": site_id,
             "interval_m": interval_m,
             "type": "FeatureCollection",
@@ -279,6 +375,9 @@ class TerrainVisualizationService:
             "max_elevation_m": float(end_elev),
             "contour_count": len(features),
         }
+        
+        await self._cache_geojson(site_id, TerrainType.CONTOURS, variant, result, db)
+        return result
     
     def _extract_contour_at_elevation(
         self,
@@ -343,6 +442,10 @@ class TerrainVisualizationService:
         # Determine slope threshold
         if max_slope_deg is None:
             max_slope_deg = SLOPE_LIMITS.get(asset_type, 15.0)
+        variant = f"asset:{asset_type}|max:{max_slope_deg}"
+        cached = await self._get_cached_geojson(site_id, TerrainType.BUILDABLE_AREA, variant, db)
+        if cached:
+            return cached
         
         # Get DEM and slope data
         dem_s3_key = await self._dem_service.get_dem_for_site(site_id, boundary, db)
@@ -384,7 +487,7 @@ class TerrainVisualizationService:
         total_cells = np.sum(boundary_mask)
         buildable_m2 = buildable_cells * cell_area_m2
         
-        return {
+        result = {
             "site_id": site_id,
             "asset_type": asset_type,
             "max_slope_deg": max_slope_deg,
@@ -394,6 +497,9 @@ class TerrainVisualizationService:
             "buildable_area_ha": round(buildable_m2 / 10000, 2),
             "buildable_percentage": round(buildable_cells / total_cells * 100, 1) if total_cells > 0 else 0,
         }
+        
+        await self._cache_geojson(site_id, TerrainType.BUILDABLE_AREA, variant, result, db)
+        return result
     
     async def get_slope_heatmap(
         self,
@@ -413,6 +519,11 @@ class TerrainVisualizationService:
             GeoJSON FeatureCollection with slope zone polygons
         """
         # Get DEM and slope data
+        variant = "default"
+        cached = await self._get_cached_geojson(site_id, TerrainType.SLOPE_HEATMAP, variant, db)
+        if cached:
+            return cached
+
         dem_s3_key = await self._dem_service.get_dem_for_site(site_id, boundary, db)
         if not dem_s3_key:
             raise ValueError(f"Could not fetch DEM for site {site_id}")
@@ -459,7 +570,7 @@ class TerrainVisualizationService:
             
             features.extend(class_features)
         
-        return {
+        result = {
             "site_id": site_id,
             "type": "FeatureCollection",
             "features": features,
@@ -474,6 +585,9 @@ class TerrainVisualizationService:
                 for sc in SLOPE_CLASSES
             ],
         }
+        
+        await self._cache_geojson(site_id, TerrainType.SLOPE_HEATMAP, variant, result, db)
+        return result
     
     def _mask_to_polygons(
         self,

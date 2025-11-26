@@ -15,6 +15,8 @@ class SiteUploadResponse(BaseModel):
     name: str = Field(..., description="Name of the site (from filename or KML)")
     area_m2: float = Field(..., description="Site area in square meters")
     boundary: dict[str, Any] = Field(..., description="Site boundary as GeoJSON Polygon")
+    entry_point: Optional[dict[str, Any]] = Field(None, description="Entry point as GeoJSON Point")
+    entry_point_metadata: Optional[dict[str, Any]] = Field(None, description="Metadata for the entry point")
     created_at: datetime = Field(..., description="Timestamp when the site was created")
     
     class Config:
@@ -29,6 +31,8 @@ class SiteResponse(BaseModel):
     name: str
     area_m2: float
     boundary: dict[str, Any] = Field(..., description="Site boundary as GeoJSON")
+    entry_point: Optional[dict[str, Any]] = Field(None, description="Entry point as GeoJSON Point")
+    entry_point_metadata: Optional[dict[str, Any]] = Field(None, description="Metadata for the entry point")
     created_at: datetime
     updated_at: datetime
     

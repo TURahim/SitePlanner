@@ -705,14 +705,15 @@ export function SiteDetailPage() {
             </div>
           )}
 
-          {/* Processing state (Phase C async) */}
+          {/* Processing state (Phase C async, Phase 4 progress tracking) */}
           {(isGenerating || isPolling) && pollingStatus && (
             <div className="processing-state">
               <div className="processing-header">
                 <div className="processing-spinner" />
                 <span className="processing-status">
-                  {pollingStatus.status === 'queued' && 'Queued...'}
-                  {pollingStatus.status === 'processing' && 'Processing...'}
+                  {pollingStatus.stage_message || (
+                    pollingStatus.status === 'queued' ? 'Queued...' : 'Processing...'
+                  )}
                 </span>
               </div>
               <div className="processing-details">
@@ -720,20 +721,33 @@ export function SiteDetailPage() {
                   Elapsed: {formatElapsedTime(elapsedTime)}
                 </span>
                 <span className="processing-hint">
-                  {pollingStatus.status === 'queued' 
+                  {pollingStatus.stage === 'fetching_dem' && 'Downloading elevation data...'}
+                  {pollingStatus.stage === 'computing_slope' && 'Computing terrain slope...'}
+                  {pollingStatus.stage === 'analyzing_terrain' && 'Analyzing terrain suitability...'}
+                  {pollingStatus.stage === 'placing_assets' && 'Placing assets...'}
+                  {pollingStatus.stage === 'generating_roads' && 'Generating road network...'}
+                  {pollingStatus.stage === 'computing_earthwork' && 'Calculating earthwork...'}
+                  {pollingStatus.stage === 'finalizing' && 'Saving layout...'}
+                  {pollingStatus.stage === 'queued' && 'Waiting for worker...'}
+                  {!pollingStatus.stage && (pollingStatus.status === 'queued' 
                     ? 'Waiting for worker...' 
-                    : 'Generating terrain-aware layout...'}
+                    : 'Generating terrain-aware layout...')}
                 </span>
               </div>
               <div className="processing-progress">
                 <div 
                   className="progress-bar" 
                   style={{ 
-                    width: pollingStatus.status === 'queued' ? '15%' : '60%',
+                    width: `${pollingStatus.progress_pct ?? (pollingStatus.status === 'queued' ? 5 : 50)}%`,
                     transition: 'width 0.5s ease-out'
                   }} 
                 />
               </div>
+              {pollingStatus.progress_pct !== undefined && (
+                <div className="progress-percentage">
+                  {pollingStatus.progress_pct}%
+                </div>
+              )}
               <button 
                 className="btn-cancel" 
                 onClick={handleCancelGeneration}

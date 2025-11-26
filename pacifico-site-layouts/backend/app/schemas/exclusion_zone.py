@@ -92,6 +92,12 @@ class ExclusionZoneCreate(BaseModel):
         le=1000,
         description="Additional buffer around geometry in meters",
     )
+    cost_multiplier: float = Field(
+        default=1.0,
+        ge=0.0,
+        le=100.0,
+        description="Cost multiplier for pathfinding (1.0 = neutral)",
+    )
     description: Optional[str] = Field(
         None,
         max_length=1000,
@@ -143,6 +149,12 @@ class ExclusionZoneUpdate(BaseModel):
         le=1000,
         description="Additional buffer around geometry in meters",
     )
+    cost_multiplier: Optional[float] = Field(
+        None,
+        ge=0.0,
+        le=100.0,
+        description="Cost multiplier for pathfinding",
+    )
     description: Optional[str] = Field(
         None,
         max_length=1000,
@@ -182,6 +194,7 @@ class ExclusionZoneResponse(BaseModel):
     zone_type: str
     geometry: dict[str, Any] = Field(..., description="GeoJSON Polygon geometry")
     buffer_m: float
+    cost_multiplier: float = Field(..., description="Cost multiplier for pathfinding")
     description: Optional[str]
     area_m2: Optional[float]
     color: str = Field(..., description="Display color for this zone type")

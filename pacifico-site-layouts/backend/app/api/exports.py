@@ -92,10 +92,11 @@ async def _get_layout_with_details(
     Returns tuple of (layout, site, assets_list, roads_list, terrain_summary)
     """
     # Query layout with ownership check through site
+    # Note: Must specify join condition explicitly because Site has preferred_layout_id FK back to Layout
     result = await db.execute(
         select(Layout)
         .options(selectinload(Layout.assets), selectinload(Layout.roads))
-        .join(Site)
+        .join(Site, Layout.site_id == Site.id)
         .where(
             Layout.id == layout_id,
             Site.owner_id == current_user.id,
@@ -166,6 +167,9 @@ async def _get_layout_with_details(
                 terrain_summary = await terrain_service.get_terrain_summary(
                     site.id, db, boundary_polygon
                 )
+        except ValueError as e:
+            # DEM/slope data not available - continue without terrain summary
+            logger.warning(f"Terrain data not available for export: {e}")
         except Exception as e:
             logger.warning(f"Could not fetch terrain summary for export: {e}")
     

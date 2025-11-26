@@ -97,6 +97,13 @@ class ExclusionZone(Base, UUIDMixin, TimestampMixin):
         default=0.0,
     )
     
+    # Cost multiplier for pathfinding (1.0 = neutral, >1.0 = avoid, <1.0 = preferred)
+    cost_multiplier: Mapped[float] = mapped_column(
+        Float,
+        nullable=False,
+        default=1.0,
+    )
+    
     # Optional description
     description: Mapped[Optional[str]] = mapped_column(
         Text,

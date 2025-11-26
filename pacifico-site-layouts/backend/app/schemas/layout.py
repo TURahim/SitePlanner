@@ -126,6 +126,14 @@ class RoadResponse(BaseModel):
     geometry: dict[str, Any] = Field(..., description="Geometry as GeoJSON LineString")
     max_grade_pct: Optional[float] = Field(None, description="Maximum grade along road (%)")
     
+    # Enhanced road metrics
+    road_class: Optional[str] = Field(None, description="Road hierarchy class (spine, secondary, tertiary)")
+    parent_segment_id: Optional[UUID] = Field(None, description="ID of the parent road segment")
+    avg_grade_pct: Optional[float] = Field(None, description="Average grade (%)")
+    max_cumulative_cost: Optional[float] = Field(None, description="Maximum cumulative cost to reach this segment")
+    kpi_flags: Optional[dict[str, Any]] = Field(None, description="KPI flags raised for this road")
+    stationing_json: Optional[dict[str, Any]] = Field(None, description="Detailed stationing data (chainage, elev, etc.)")
+    
     class Config:
         from_attributes = True
 
@@ -214,8 +222,37 @@ class LayoutEnqueueResponse(BaseModel):
         from_attributes = True
 
 
+class LayoutGenerationStage(str, Enum):
+    """Stages of layout generation for progress tracking (Phase 4 GAP)."""
+    QUEUED = "queued"              # Job in queue
+    FETCHING_DEM = "fetching_dem"  # Downloading DEM data
+    COMPUTING_SLOPE = "computing_slope"  # Computing slope raster
+    ANALYZING_TERRAIN = "analyzing_terrain"  # Terrain analysis (curvature, suitability)
+    PLACING_ASSETS = "placing_assets"  # Asset placement
+    GENERATING_ROADS = "generating_roads"  # Road network generation
+    COMPUTING_EARTHWORK = "computing_earthwork"  # Cut/fill calculation
+    FINALIZING = "finalizing"      # Saving to database
+    COMPLETED = "completed"        # Done
+    FAILED = "failed"              # Error
+
+
+# Stage progress percentages for progress bar
+STAGE_PROGRESS = {
+    LayoutGenerationStage.QUEUED: 0,
+    LayoutGenerationStage.FETCHING_DEM: 10,
+    LayoutGenerationStage.COMPUTING_SLOPE: 25,
+    LayoutGenerationStage.ANALYZING_TERRAIN: 40,
+    LayoutGenerationStage.PLACING_ASSETS: 55,
+    LayoutGenerationStage.GENERATING_ROADS: 70,
+    LayoutGenerationStage.COMPUTING_EARTHWORK: 85,
+    LayoutGenerationStage.FINALIZING: 95,
+    LayoutGenerationStage.COMPLETED: 100,
+    LayoutGenerationStage.FAILED: -1,
+}
+
+
 class LayoutStatusResponse(BaseModel):
-    """Response schema for layout status polling (C-04)."""
+    """Response schema for layout status polling (C-04, enhanced Phase 4 GAP)."""
     
     layout_id: UUID = Field(..., description="ID of the layout")
     status: str = Field(
@@ -225,6 +262,22 @@ class LayoutStatusResponse(BaseModel):
     error_message: Optional[str] = Field(
         None,
         description="Error message if status is 'failed'"
+    )
+    
+    # Phase 4 (GAP): Progress tracking
+    stage: Optional[str] = Field(
+        None,
+        description="Current generation stage (e.g., 'fetching_dem', 'placing_assets')"
+    )
+    progress_pct: Optional[int] = Field(
+        None,
+        ge=0,
+        le=100,
+        description="Progress percentage (0-100)"
+    )
+    stage_message: Optional[str] = Field(
+        None,
+        description="Human-readable message about current stage"
     )
     
     # Populated only when status is 'completed'
@@ -307,4 +360,85 @@ class LayoutStrategiesResponse(BaseModel):
     """Response for available layout strategies (D-05)."""
     
     strategies: list[StrategyInfo]
+
+
+# =============================================================================
+# Phase 3 (GAP): Asset Manipulation Schemas
+# =============================================================================
+
+
+class AssetMoveRequest(BaseModel):
+    """Request schema for moving an asset (Phase 3 GAP)."""
+    
+    position: dict = Field(
+        ...,
+        description="New position as GeoJSON Point {type: 'Point', coordinates: [lng, lat]}",
+    )
+    recompute_local: bool = Field(
+        default=True,
+        description="Re-evaluate slope and suitability at new position",
+    )
+    
+    @property
+    def longitude(self) -> float:
+        """Extract longitude from GeoJSON position."""
+        coords = self.position.get("coordinates", [0, 0])
+        return coords[0] if len(coords) >= 2 else 0.0
+    
+    @property
+    def latitude(self) -> float:
+        """Extract latitude from GeoJSON position."""
+        coords = self.position.get("coordinates", [0, 0])
+        return coords[1] if len(coords) >= 2 else 0.0
+
+
+class AssetMoveResponse(BaseModel):
+    """Response schema for asset move (Phase 3 GAP)."""
+    
+    asset: AssetResponse
+    message: str
+    warnings: list[str] = Field(default_factory=list, description="Validation warnings")
+
+
+class RecomputeRoadsRequest(BaseModel):
+    """Request schema for recomputing roads (Phase 3 GAP)."""
+    
+    dem_resolution_m: int = Field(
+        default=10,
+        ge=10,
+        le=30,
+        description="DEM resolution for terrain data",
+    )
+
+
+class RecomputeRoadsResponse(BaseModel):
+    """Response schema for roads recompute (Phase 3 GAP)."""
+    
+    layout_id: UUID
+    roads: list[RoadResponse]
+    road_count: int
+    total_length_m: float
+    message: str
+
+
+class RecomputeEarthworkRequest(BaseModel):
+    """Request schema for recomputing earthwork (Phase 3 GAP)."""
+    
+    include_roads: bool = Field(
+        default=True,
+        description="Include road corridor earthwork in calculation",
+    )
+
+
+class RecomputeEarthworkResponse(BaseModel):
+    """Response schema for earthwork recompute (Phase 3 GAP)."""
+    
+    layout_id: UUID
+    cut_volume_m3: float
+    fill_volume_m3: float
+    road_cut_m3: Optional[float] = None
+    road_fill_m3: Optional[float] = None
+    net_earthwork_m3: float
+    per_asset: list[dict] = Field(default_factory=list)
+    message: str
 

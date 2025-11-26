@@ -193,11 +193,13 @@ class SlopeService:
         db: AsyncSession,
     ) -> Optional[str]:
         """Check if we have a cached slope raster for this site."""
-        result = await db.execute(
+        stmt = (
             select(TerrainCache)
             .where(TerrainCache.site_id == site_id)
             .where(TerrainCache.terrain_type == TerrainType.SLOPE.value)
+            .where(TerrainCache.variant_key.is_(None))
         )
+        result = await db.execute(stmt)
         cache_entry = result.scalar_one_or_none()
         
         if cache_entry:
@@ -240,13 +242,20 @@ class SlopeService:
         resolution_m: Optional[float],
         source: str,
         db: AsyncSession,
+        variant: Optional[str] = None,
     ) -> TerrainCache:
         """Create or update a TerrainCache record."""
-        result = await db.execute(
+        stmt = (
             select(TerrainCache)
             .where(TerrainCache.site_id == site_id)
             .where(TerrainCache.terrain_type == terrain_type.value)
         )
+        if variant is None:
+            stmt = stmt.where(TerrainCache.variant_key.is_(None))
+        else:
+            stmt = stmt.where(TerrainCache.variant_key == variant)
+
+        result = await db.execute(stmt)
         existing = result.scalar_one_or_none()
         
         if existing:
@@ -261,6 +270,7 @@ class SlopeService:
                 s3_key=s3_key,
                 resolution_m=resolution_m,
                 source=source,
+                variant_key=variant,
             )
             db.add(cache_entry)
         

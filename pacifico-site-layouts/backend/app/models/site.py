@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Optional
 
 from geoalchemy2 import Geometry
 from sqlalchemy import Float, ForeignKey, String
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSON, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin, UUIDMixin
@@ -46,6 +46,18 @@ class Site(Base, UUIDMixin, TimestampMixin):
     # Calculated area in square meters
     area_m2: Mapped[Optional[float]] = mapped_column(
         Float,
+        nullable=True,
+    )
+
+    # Entry point for road network (gate/easement)
+    entry_point: Mapped[Optional[str]] = mapped_column(
+        Geometry(geometry_type="POINT", srid=4326),
+        nullable=True,
+    )
+    
+    # Metadata for the entry point
+    entry_point_metadata: Mapped[Optional[dict]] = mapped_column(
+        JSON,
         nullable=True,
     )
     

@@ -1,11 +1,13 @@
 """
 Layout model - represents a generated layout for a site.
+
+Phase 4 (GAP): Added progress tracking fields (stage, progress_pct, stage_message).
 """
 import uuid
 from enum import Enum
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import Float, ForeignKey, String
+from sqlalchemy import Float, ForeignKey, Integer, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -21,6 +23,24 @@ class LayoutStatus(str, Enum):
     """Status of a layout generation job."""
     QUEUED = "queued"
     PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class LayoutStage(str, Enum):
+    """
+    Stages of layout generation for progress tracking (Phase 4 GAP).
+    
+    Matches LayoutGenerationStage in schemas/layout.py.
+    """
+    QUEUED = "queued"
+    FETCHING_DEM = "fetching_dem"
+    COMPUTING_SLOPE = "computing_slope"
+    ANALYZING_TERRAIN = "analyzing_terrain"
+    PLACING_ASSETS = "placing_assets"
+    GENERATING_ROADS = "generating_roads"
+    COMPUTING_EARTHWORK = "computing_earthwork"
+    FINALIZING = "finalizing"
     COMPLETED = "completed"
     FAILED = "failed"
 
@@ -46,6 +66,24 @@ class Layout(Base, UUIDMixin, TimestampMixin):
     # Error message if status is FAILED
     error_message: Mapped[Optional[str]] = mapped_column(
         String(1024),
+        nullable=True,
+    )
+    
+    # Phase 4 (GAP): Progress tracking
+    stage: Mapped[Optional[str]] = mapped_column(
+        String(50),
+        nullable=True,
+        default=LayoutStage.QUEUED.value,
+    )
+    
+    progress_pct: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        nullable=True,
+        default=0,
+    )
+    
+    stage_message: Mapped[Optional[str]] = mapped_column(
+        String(255),
         nullable=True,
     )
     

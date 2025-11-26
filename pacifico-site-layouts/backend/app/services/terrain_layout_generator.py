@@ -33,7 +33,9 @@ from uuid import UUID
 
 import numpy as np
 from rasterio.transform import Affine, rowcol, xy
-from scipy.spatial import distance_matrix
+from scipy import ndimage
+from scipy.ndimage import distance_transform_edt
+from scipy.spatial import distance_matrix, cKDTree
 from shapely.geometry import LineString, Point, Polygon, box, mapping
 from shapely.affinity import rotate, translate
 from shapely.ops import unary_union
@@ -118,6 +120,13 @@ class PlacedRoad:
     length_m: float
     width_m: float = 5.0
     max_grade_pct: float = 0.0
+    max_cumulative_cost: float = 0.0
+    road_class: str = "tertiary"  # spine, secondary, tertiary
+    parent_segment_id: Optional[UUID] = None
+    stationing: list[dict] = field(default_factory=list)
+    kpi_flags: list[str] = field(default_factory=list)
+    retry_count: int = 0
+    failure_reason: Optional[str] = None
 
 
 @dataclass
@@ -128,6 +137,7 @@ class CutFillResult:
     road_cut_m3: float = 0.0  # Cut volume for road corridors
     road_fill_m3: float = 0.0  # Fill volume for road corridors
     per_asset: list[dict] = field(default_factory=list)
+    per_road: list[dict] = field(default_factory=list)
     
     @property
     def total_cut_m3(self) -> float:
@@ -275,8 +285,10 @@ class TerrainAwareLayoutGenerator:
         slope_array: np.ndarray,
         transform: Affine,
         num_assets: int = 8,
-        exclusion_zones: Optional[list[Polygon]] = None,
+        exclusion_zones: Optional[list[dict[str, Any]]] = None,
         aspect_array: Optional[np.ndarray] = None,
+        curvature_array: Optional[np.ndarray] = None,
+        plan_curvature_array: Optional[np.ndarray] = None,
         suitability_scores: Optional[dict[str, np.ndarray]] = None,
         entry_point: Optional[Point] = None,
     ) -> tuple[list[PlacedAsset], list[PlacedRoad], CutFillResult]:
@@ -289,8 +301,10 @@ class TerrainAwareLayoutGenerator:
             slope_array: Slope data (degrees)
             transform: Rasterio affine transform
             num_assets: Target number of assets
-            exclusion_zones: Optional list of exclusion zone polygons (D-03)
-            aspect_array: Optional aspect data (degrees, 0-360 clockwise from north)
+            exclusion_zones: Optional list of exclusion zone dicts (polygon, cost_multiplier)
+            aspect_array: Optional aspect data
+            curvature_array: Optional curvature data
+            plan_curvature_array: Optional plan curvature data
             suitability_scores: Optional dict of asset_type -> suitability score array
             entry_point: Optional site entry point for road network optimization
             
@@ -299,6 +313,10 @@ class TerrainAwareLayoutGenerator:
         """
         if not boundary.is_valid:
             boundary = boundary.buffer(0)
+        
+        # 1. Normalize Inputs: Fill nodata
+        dem_array = self._fill_nodata(dem_array)
+        slope_array = self._fill_nodata(slope_array, fill_value=0)
         
         # Get raster dimensions and cell size
         height, width = slope_array.shape
@@ -317,21 +335,26 @@ class TerrainAwareLayoutGenerator:
         logger.info(f"Grid: {width}x{height}, cell size: {cell_size_m:.1f}m")
         
         # Store for use in other methods
+        self._dem_array = dem_array
+        self._slope_array = slope_array # Also useful
         self._aspect_array = aspect_array
+        self._curvature_array = curvature_array
+        self._plan_curvature_array = plan_curvature_array
         self._suitability_scores = suitability_scores or {}
         self._entry_point = entry_point
         
         # Create boundary mask
         boundary_mask = self._rasterize_boundary(boundary, transform, (height, width))
         
-        # D-03: Create exclusion zone mask
+        # D-03: Create exclusion zone mask and allowance mask
         exclusion_mask = np.zeros((height, width), dtype=bool)
+        self._allowance_mask = np.ones((height, width), dtype=np.float32)
+        
         if exclusion_zones:
-            exclusion_mask = self._create_exclusion_mask(
+            exclusion_mask, self._allowance_mask = self._process_exclusion_zones(
                 exclusion_zones=exclusion_zones,
                 transform=transform,
                 shape=(height, width),
-                cell_size_m=cell_size_m,
             )
             excluded_pct = np.sum(exclusion_mask & boundary_mask) / np.sum(boundary_mask) * 100
             logger.info(f"Exclusion zones: {len(exclusion_zones)} zones, {excluded_pct:.1f}% of site excluded")
@@ -375,48 +398,87 @@ class TerrainAwareLayoutGenerator:
         
         return assets, roads, cut_fill
     
-    def _create_exclusion_mask(
+    def _fill_nodata(self, array: np.ndarray, fill_value: float = None) -> np.ndarray:
+        """
+        Fill nodata/NaN values in raster array using nearest neighbor interpolation.
+        """
+        # Treat large negative values as nodata
+        mask = np.isnan(array) | (array < -9000)
+        if not np.any(mask):
+            return array
+            
+        if fill_value is not None:
+            filled = array.copy()
+            filled[mask] = fill_value
+            return filled
+            
+        # Nearest neighbor interpolation using distance transform
+        # indices returns the indices of the nearest background point (where mask is 0/False)
+        # So we invert mask: valid data is background (0), nodata is foreground (1)
+        indices = distance_transform_edt(mask, return_distances=False, return_indices=True)
+        return array[tuple(indices)]
+
+    def _process_exclusion_zones(
         self,
-        exclusion_zones: list[Polygon],
+        exclusion_zones: list[dict[str, Any]],
         transform: Affine,
         shape: tuple[int, int],
-        cell_size_m: float,
-    ) -> np.ndarray:
+    ) -> tuple[np.ndarray, np.ndarray]:
         """
-        Create a boolean mask from exclusion zone polygons.
-        
-        D-03: Rasterizes exclusion zones including their buffers.
-        
-        Args:
-            exclusion_zones: List of exclusion zone polygons
-            transform: Rasterio affine transform
-            shape: Output shape (height, width)
-            cell_size_m: Cell size in meters
+        Process exclusion zones to create binary mask and cost multiplier mask.
             
         Returns:
-            Boolean mask where True = excluded area
+            Tuple of (exclusion_mask, allowance_mask)
         """
         from rasterio.features import rasterize
         
-        mask = np.zeros(shape, dtype=np.uint8)
+        exclusion_mask = np.zeros(shape, dtype=bool)
+        allowance_mask = np.ones(shape, dtype=np.float32)
+        
+        # Separate hard exclusions vs allowances
+        hard_zones = []
+        allowance_zones = []
         
         for zone in exclusion_zones:
-            if not zone.is_valid:
-                zone = zone.buffer(0)
+            poly = zone["polygon"]
+            multiplier = zone.get("cost_multiplier", 1.0)
             
-            try:
-                zone_mask = rasterize(
-                    [(zone, 1)],
+            if not poly.is_valid:
+                poly = poly.buffer(0)
+                
+            # Treat very high cost (>= 100) as hard exclusion for buildable area
+            # But only if it's not an allowance (multiplier < 1.0)
+            if multiplier >= 100.0: 
+                 hard_zones.append(poly)
+            elif abs(multiplier - 1.0) > 0.001:
+                 allowance_zones.append((poly, multiplier))
+            
+        # Rasterize hard exclusions
+        if hard_zones:
+            exclusion_mask = rasterize(
+                [(p, 1) for p in hard_zones],
+                out_shape=shape,
+                transform=transform,
+                fill=0,
+                dtype=np.uint8,
+            ).astype(bool)
+            
+        # Rasterize allowances/penalties
+        for poly, multiplier in allowance_zones:
+             try:
+                 mask = rasterize(
+                    [(poly, 1)],
                     out_shape=shape,
                     transform=transform,
                     fill=0,
                     dtype=np.uint8,
-                )
-                mask = mask | zone_mask
-            except Exception as e:
-                logger.warning(f"Could not rasterize exclusion zone: {e}")
-        
-        return mask.astype(bool)
+                ).astype(bool)
+                 # Apply multiplier where mask is True
+                 allowance_mask[mask] *= multiplier
+             except Exception:
+                 logger.warning("Failed to rasterize allowance zone")
+             
+        return exclusion_mask, allowance_mask
     
     def _rasterize_boundary(
         self,
@@ -1019,57 +1081,100 @@ class TerrainAwareLayoutGenerator:
         )
         
         # Build cost surface from slope
-        # Phase E: Enhanced cost surface with stronger slope penalties
+        # Phase E: Enhanced cost surface with stronger slope penalties and allowance zones
         max_slope_for_road = np.degrees(np.arctan(self.MAX_ROAD_GRADE_PCT / 100))  # ~5.7° for 10%
         
-        # Base cost increases with cube of slope ratio - strong penalty for steeper terrain
+        # Base cost: 1 + (slope / slope_limit)^3
+        # This makes slopes below limit cheap, but cost skyrockets above it
         slope_ratio = slope_array / max_slope_for_road
-        cost_surface = 1 + np.power(np.clip(slope_ratio, 0, 3), 3)
+        cost_surface = 1 + np.power(np.clip(slope_ratio, 0, 5), 3)
         
-        # Add strong penalty for slopes approaching limit (80% of max)
+        # Curvature penalties (ridges/gullies)
+        if getattr(self, '_curvature_array', None) is not None:
+            curv = self._curvature_array
+            # Ridge penalty (convex, >0): +2x surcharge for sharp ridges
+            ridge_mask = curv > 0.05
+            cost_surface[ridge_mask] *= (1 + curv[ridge_mask] * 20)  # Scale curvature to ~1-3x
+            
+            # Gully penalty (concave, <0): +1.5x surcharge
+            gully_mask = curv < -0.05
+            cost_surface[gully_mask] *= (1 + np.abs(curv[gully_mask]) * 10)
+
+        # Allowance mask (reduces cost in designated zones, increases in avoidance zones)
+        if getattr(self, '_allowance_mask', None) is not None:
+            cost_surface *= self._allowance_mask
+            
+        # Make very steep slopes (>25°) finite but expensive (instead of infinite)
+        # This allows crossing short steep sections if absolutely necessary
         cost_surface = np.where(
-            slope_array > max_slope_for_road * 0.8,
-            cost_surface * 5,  # 5x penalty
+            slope_array > 25.0,
+            10000.0,
             cost_surface
         )
         
-        # Make slopes over limit very expensive (120% of max)
-        cost_surface = np.where(
-            slope_array > max_slope_for_road * 1.2,
-            500,  # Very high cost
-            cost_surface
-        )
+        # Budget ceiling for pathfinding (equivalent to 500km of travel on flat ground)
+        # This prevents infinite loops or extremely circuitous routes
+        budget_ceiling = (500000.0 / cell_size_m) * 1.0  # 500km in cells
         
-        # Make very steep slopes (>15°) nearly impassable
-        cost_surface = np.where(
-            slope_array > 15.0,
-            10000,  # Prohibitive
-            cost_surface
-        )
+        # 1. Primary Spine: Entry -> Substation
+        spine_roads = []
+        if self._entry_point and hub_asset:
+            try:
+                start_row, start_col = rowcol(transform, self._entry_point.x, self._entry_point.y)
+                height, width = cost_surface.shape
+                
+                if 0 <= start_row < height and 0 <= start_col < width:
+                    spine_path, spine_cost = self._find_path_astar(
+                        start=(start_row, start_col),
+                        end=(hub_asset.grid_row, hub_asset.grid_col),
+                        cost_surface=cost_surface,
+                        budget_ceiling=budget_ceiling
+                    )
+                    
+                    if spine_path:
+                        spine_road = self._path_to_road(
+                            path=spine_path,
+                            cost=spine_cost,
+                            name="Primary Spine",
+                            road_class="spine",
+                            transform=transform,
+                            cell_size_m=cell_size_m,
+                            slope_array=slope_array,
+                        )
+                        roads.append(spine_road)
+                        spine_roads.append(spine_road)
+                        logger.info(f"Generated spine road: {spine_road.length_m:.1f}m")
+            except Exception as e:
+                logger.warning(f"Failed to generate spine road: {e}")
         
         # Check if we should use MST-based routing
         use_mst = self.strategy_config.get("use_mst_roads", False)
         
         if use_mst and len(assets) > 2:
             # Use Minimum Spanning Tree for road network
-            roads = self._generate_mst_roads(
+            mst_roads = self._generate_mst_roads(
                 assets=assets,
                 hub_asset=hub_asset,
                 cost_surface=cost_surface,
                 slope_array=slope_array,
                 transform=transform,
                 cell_size_m=cell_size_m,
+                budget_ceiling=budget_ceiling,
+                spine_roads=spine_roads,
             )
+            roads.extend(mst_roads)
         else:
             # Use star topology (hub-and-spoke)
-            roads = self._generate_star_roads(
+            star_roads = self._generate_star_roads(
                 assets=assets,
                 hub_asset=hub_asset,
                 cost_surface=cost_surface,
                 slope_array=slope_array,
                 transform=transform,
                 cell_size_m=cell_size_m,
+                budget_ceiling=budget_ceiling,
             )
+            roads.extend(star_roads)
         
         logger.info(f"Generated {len(roads)} road segments (topology: {'MST' if use_mst else 'star'})")
         return roads
@@ -1082,6 +1187,7 @@ class TerrainAwareLayoutGenerator:
         slope_array: np.ndarray,
         transform: Affine,
         cell_size_m: float,
+        budget_ceiling: float = 50000.0,
     ) -> list[PlacedRoad]:
         """Generate roads using star (hub-and-spoke) topology."""
         roads = []
@@ -1096,6 +1202,7 @@ class TerrainAwareLayoutGenerator:
                 transform=transform,
                 cell_size_m=cell_size_m,
                 road_name=f"Access Road {i + 1}",
+                budget_ceiling=budget_ceiling,
             )
             if road:
                 roads.append(road)
@@ -1110,6 +1217,8 @@ class TerrainAwareLayoutGenerator:
         slope_array: np.ndarray,
         transform: Affine,
         cell_size_m: float,
+        budget_ceiling: float = 50000.0,
+        spine_roads: Optional[list[PlacedRoad]] = None,
     ) -> list[PlacedRoad]:
         """
         Generate roads using Minimum Spanning Tree topology.
@@ -1124,10 +1233,9 @@ class TerrainAwareLayoutGenerator:
             return roads
         
         # Build distance matrix (terrain-weighted)
-        # For simplicity, use Euclidean distance * average slope penalty
         positions = np.array([[a.grid_row, a.grid_col] for a in assets])
         
-        # Compute pairwise distances
+        # Compute pairwise distances between assets
         dist_matrix = np.zeros((n, n))
         for i in range(n):
             for j in range(i + 1, n):
@@ -1153,44 +1261,233 @@ class TerrainAwareLayoutGenerator:
         # Find hub index
         hub_idx = next(i for i, a in enumerate(assets) if a is hub_asset)
         
-        # Prim's algorithm starting from hub
+        # Prim's algorithm
+        # keys: min cost to connect to tree
+        # parents: index of node to connect to (or -1 for spine)
+        keys = [float('inf')] * n
+        parents = [None] * n
         in_tree = [False] * n
-        in_tree[hub_idx] = True
-        edges = []  # (from_idx, to_idx)
         
-        for _ in range(n - 1):
-            min_dist = float('inf')
-            min_edge = None
+        keys[hub_idx] = 0
+        
+        # Initialize with spine connections if available
+        spine_connection_points = {}  # asset_idx -> (row, col) on spine
+        
+        if spine_roads:
+            # Treat spine as part of the tree.
+            # Any asset can connect to the spine if it's cheaper than connecting to hub
+            # For simplicity, we'll assume spine geometry is available.
+            # We need to find the "closest" point on the spine for each asset.
+            # This is computationally expensive if we do full A*.
+            # Approximation: find closest point on geometry, check slope penalty.
+            
+            spine_geom = unary_union([r.geometry for r in spine_roads])
             
             for i in range(n):
-                if not in_tree[i]:
+                if i == hub_idx:
                     continue
-                for j in range(n):
-                    if in_tree[j]:
-                        continue
-                    if dist_matrix[i, j] < min_dist:
-                        min_dist = dist_matrix[i, j]
-                        min_edge = (i, j)
+                    
+                asset_pt = assets[i].position
+                # Closest point on spine
+                nearest_pt = spine_geom.interpolate(spine_geom.project(asset_pt))
+                
+                # Convert to grid
+                try:
+                    nr, nc = rowcol(transform, nearest_pt.x, nearest_pt.y)
+                    ar, ac = positions[i]
+                    
+                    dist = np.sqrt((nr - ar)**2 + (nc - ac)**2)
+                    # Basic slope penalty check (just endpoints and midpoint)
+                    mr, mc = int((nr+ar)/2), int((nc+ac)/2)
+                    
+                    # Check bounds
+                    if 0 <= nr < slope_array.shape[0] and 0 <= nc < slope_array.shape[1]:
+                        avg_slope = (slope_array[ar, ac] + slope_array[nr, nc] + slope_array[mr, mc]) / 3
+                        slope_penalty = 1 + (avg_slope / 10) ** 2
+                        cost = dist * slope_penalty
+                        
+                        # Bias towards spine to create main arteries (0.8 factor)
+                        cost *= 0.8
+                        
+                        if cost < keys[i]:
+                            keys[i] = cost
+                            parents[i] = -1  # Mark as connecting to spine
+                            spine_connection_points[i] = (nr, nc)
+                except Exception:
+                    pass
+
+        for _ in range(n):
+            # Extract min
+            u = -1
+            min_val = float('inf')
+            for i in range(n):
+                if not in_tree[i] and keys[i] < min_val:
+                    min_val = keys[i]
+                    u = i
             
-            if min_edge:
-                edges.append(min_edge)
-                in_tree[min_edge[1]] = True
-        
-        # Create road segments for MST edges
-        for idx, (i, j) in enumerate(edges):
-            road = self._create_road_segment(
-                start_asset=assets[i],
-                end_asset=assets[j],
-                cost_surface=cost_surface,
-                slope_array=slope_array,
-                transform=transform,
-                cell_size_m=cell_size_m,
-                road_name=f"Access Road {idx + 1}",
-            )
-            if road:
-                roads.append(road)
+            if u == -1:
+                break
+                
+            in_tree[u] = True
+            
+            # Create road if parent is defined
+            parent = parents[u]
+            if parent is not None:
+                if parent == -1:
+                    # Connect to spine
+                    target_pos = spine_connection_points.get(u)
+                    if target_pos:
+                        # Create dummy asset for target
+                        target_asset = PlacedAsset(
+                            asset_type="spine_node", name="Spine",
+                            position=Point(0,0), # Ignored by _create_road_segment if we passed coordinates, but we don't.
+                            # Wait, _create_road_segment takes assets.
+                            # I need to construct a temp asset or modify _create_road_segment.
+                            # Easier: create a temporary asset object.
+                            capacity_kw=0, grid_row=target_pos[0], grid_col=target_pos[1]
+                        )
+                        # Position point
+                        tx, ty = xy(transform, target_pos[0], target_pos[1])
+                        target_asset.position = Point(tx, ty)
+                        
+                        road = self._create_road_segment(
+                            start_asset=target_asset, # From spine
+                            end_asset=assets[u],      # To asset
+                            cost_surface=cost_surface,
+                            slope_array=slope_array,
+                            transform=transform,
+                            cell_size_m=cell_size_m,
+                            road_name=f"Secondary Feed {u}",
+                            budget_ceiling=budget_ceiling,
+                        )
+                        if road:
+                            road.road_class = "secondary"
+                            roads.append(road)
+                else:
+                    # Connect to another asset
+                    road = self._create_road_segment(
+                        start_asset=assets[parent],
+                        end_asset=assets[u],
+                        cost_surface=cost_surface,
+                        slope_array=slope_array,
+                        transform=transform,
+                        cell_size_m=cell_size_m,
+                        road_name=f"Access Road {u}",
+                        budget_ceiling=budget_ceiling,
+                    )
+                    if road:
+                        road.road_class = "tertiary"
+                        roads.append(road)
+            
+            # Update neighbors
+            for v in range(n):
+                if not in_tree[v] and dist_matrix[u, v] < keys[v]:
+                    keys[v] = dist_matrix[u, v]
+                    parents[v] = u
         
         return roads
+    
+    def _path_to_road(
+        self,
+        path: list[tuple[int, int]],
+        cost: float,
+        name: str,
+        road_class: str,
+        transform: Affine,
+        cell_size_m: float,
+        slope_array: np.ndarray,
+    ) -> PlacedRoad:
+        """Convert a grid path to a PlacedRoad object with smoothing and stationing."""
+        coords = []
+        max_grade = 0.0
+
+        for row, col in path:
+            x, y = xy(transform, row, col)
+            coords.append((x, y))
+            grade = slope_array[row, col]
+            max_grade = max(max_grade, grade)
+
+        line = LineString(coords)
+
+        # Smoothing (Douglas-Peucker)
+        # Tolerance 1m. If geographic (degrees), convert 1m to degrees.
+        is_geographic = abs(transform[0]) < 1.0
+        tolerance = 1.0 if not is_geographic else 0.00001
+
+        smoothed_line = line.simplify(tolerance, preserve_topology=True)
+
+        length_factor = 111000 if is_geographic else 1.0
+        length_m = smoothed_line.length * length_factor
+
+        # Compute stationing
+        stationing = []
+        if hasattr(self, '_dem_array'):
+            stationing = self._compute_stationing(smoothed_line, length_m, self._dem_array, transform)
+
+        return PlacedRoad(
+            name=name,
+            geometry=smoothed_line,
+            length_m=round(length_m, 1),
+            width_m=5.0,
+            max_grade_pct=round(np.tan(np.radians(max_grade)) * 100, 1),
+            max_cumulative_cost=cost,
+            road_class=road_class,
+            stationing=stationing,
+        )
+
+    def _compute_stationing(
+        self,
+        line: LineString,
+        length_m: float,
+        dem_array: np.ndarray,
+        transform: Affine,
+        interval_m: float = 25.0
+    ) -> list[dict]:
+        """Compute stationing points along the road."""
+        stations = []
+        if length_m <= 0:
+            return stations
+            
+        num_points = max(2, int(length_m / interval_m) + 1)
+        
+        for i in range(num_points):
+            dist = i * interval_m
+            if dist > length_m:
+                dist = length_m
+                
+            # Get point along line (normalized distance 0-1)
+            fraction = dist / length_m
+            pt = line.interpolate(fraction, normalized=True)
+            
+            # Get elevation
+            try:
+                row, col = rowcol(transform, pt.x, pt.y)
+                elev = 0.0
+                if 0 <= row < dem_array.shape[0] and 0 <= col < dem_array.shape[1]:
+                    elev = float(dem_array[row, col])
+            except Exception:
+                elev = 0.0
+                
+            stations.append({
+                "station_m": round(dist, 1),
+                "x": round(pt.x, 6),
+                "y": round(pt.y, 6),
+                "elevation_m": round(elev, 1),
+            })
+            
+        # Calculate grades between stations
+        for i in range(len(stations) - 1):
+            s1 = stations[i]
+            s2 = stations[i+1]
+            dd = s2["station_m"] - s1["station_m"]
+            dz = s2["elevation_m"] - s1["elevation_m"]
+            grade = (dz / dd * 100) if dd > 0.1 else 0
+            s1["grade_pct"] = round(grade, 1)
+        
+        if stations:
+            stations[-1]["grade_pct"] = 0.0
+            
+        return stations
     
     def _create_road_segment(
         self,
@@ -1201,69 +1498,93 @@ class TerrainAwareLayoutGenerator:
         transform: Affine,
         cell_size_m: float,
         road_name: str,
+        budget_ceiling: float = 50000.0,
     ) -> Optional[PlacedRoad]:
-        """Create a single road segment between two assets using A* pathfinding."""
-        path = self._find_path_astar(
-            start=(start_asset.grid_row, start_asset.grid_col),
-            end=(end_asset.grid_row, end_asset.grid_col),
-            cost_surface=cost_surface,
-        )
+        """Create a single road segment between two assets using A* pathfinding with retries."""
         
-        if path and len(path) >= 2:
-            coords = []
-            max_grade = 0.0
-            for row, col in path:
-                x, y = xy(transform, row, col)
-                coords.append((x, y))
-                grade = slope_array[row, col]
-                max_grade = max(max_grade, grade)
+        for attempt in range(3):
+            # Relax constraints on retries
+            # Attempt 0: Strict (threshold 5000)
+            # Attempt 1: Relaxed (threshold 10000)
+            # Attempt 2: Very relaxed (threshold 20000)
+            threshold = 5000.0 * (2 ** attempt)
+            current_budget = budget_ceiling * (1 + attempt)
             
-            line = LineString(coords)
-            length_m = len(path) * cell_size_m
-            
-            return PlacedRoad(
-                name=road_name,
-                geometry=line,
-                length_m=round(length_m, 1),
-                width_m=5.0,
-                max_grade_pct=round(np.tan(np.radians(max_grade)) * 100, 1),
+            path, cost = self._find_path_astar(
+                start=(start_asset.grid_row, start_asset.grid_col),
+                end=(end_asset.grid_row, end_asset.grid_col),
+                cost_surface=cost_surface,
+                budget_ceiling=current_budget,
+                max_cost_threshold=threshold,
             )
+            
+            if path and len(path) >= 2:
+                road = self._path_to_road(
+                    path=path,
+                    cost=cost,
+                    name=road_name,
+                    road_class="secondary" if "Access" in road_name else "tertiary",
+                    transform=transform,
+                    cell_size_m=cell_size_m,
+                    slope_array=slope_array,
+                )
+                road.retry_count = attempt
+                
+                # Check KPIs
+                flags = []
+                if road.max_grade_pct > 10.0:
+                    flags.append(f"Max grade {road.max_grade_pct:.1f}% > 10%")
+                
+                # Avg slope
+                elevs = [p['elevation_m'] for p in road.stationing]
+                if elevs:
+                    total_climb = sum(abs(elevs[i+1]-elevs[i]) for i in range(len(elevs)-1))
+                    avg_slope = (total_climb / road.length_m * 100) if road.length_m > 0 else 0
+                    if avg_slope > 6.0:
+                        flags.append(f"Avg slope {avg_slope:.1f}% > 6%")
+                
+                road.kpi_flags = flags
+                return road
         
         # Fallback to direct line if A* fails
-        logger.warning(f"A* failed for {road_name}, using direct line")
+        logger.warning(f"A* failed for {road_name} after 3 attempts, using direct line")
         line = LineString([
             (start_asset.position.x, start_asset.position.y),
             (end_asset.position.x, end_asset.position.y)
         ])
-        length_m = line.length * 111000
         
-        return PlacedRoad(
+        # Compute length in meters
+        is_geographic = abs(transform[0]) < 1.0
+        length_factor = 111000 if is_geographic else 1.0
+        length_m = line.length * length_factor
+        
+        road = PlacedRoad(
             name=road_name,
             geometry=line,
             length_m=round(length_m, 1),
             width_m=5.0,
+            road_class="tertiary",
+            retry_count=3,
+            failure_reason="Pathfinding failed",
+            kpi_flags=["Pathfinding failed - using direct line"],
         )
+        road.max_cumulative_cost = -1.0
+        return road
     
     def _find_path_astar(
         self,
         start: tuple[int, int],
         end: tuple[int, int],
         cost_surface: np.ndarray,
-        max_iterations: int = 50000,  # Phase E: Increased from 10000
-    ) -> list[tuple[int, int]]:
+        max_iterations: int = 50000,
+        budget_ceiling: float = 50000.0,
+        max_cost_threshold: float = 5000.0,
+    ) -> tuple[list[tuple[int, int]], float]:
         """
-        Find lowest-cost path using A* algorithm.
-        
-        Phase E: Enhanced with better heuristic and increased iterations.
-        
-        Args:
-            start: Start position (row, col)
-            end: End position (row, col)
-            cost_surface: Cost array (higher = harder to traverse)
-            max_iterations: Maximum search iterations
+        Find lowest-cost path using A* algorithm with budget tracking.
             
         Returns:
-            List of (row, col) positions forming the path
+            Tuple of (path, total_cost)
         """
         rows, cols = cost_surface.shape
         
@@ -1290,9 +1611,12 @@ class TerrainAwareLayoutGenerator:
             iterations += 1
             f_score, _, g_score, current, path = heapq.heappop(heap)
             
+            if g_score > budget_ceiling:
+                continue # Exceeded budget
+            
             if current == end:
-                logger.debug(f"A* found path in {iterations} iters, length {len(path)}")
-                return path
+                logger.debug(f"A* found path in {iterations} iters, length {len(path)}, cost {g_score:.1f}")
+                return path, g_score
             
             if current in visited:
                 continue
@@ -1303,7 +1627,7 @@ class TerrainAwareLayoutGenerator:
                 
                 if 0 <= nr < rows and 0 <= nc < cols and (nr, nc) not in visited:
                     # Skip prohibitive cells entirely
-                    if cost_surface[nr, nc] >= 5000:
+                    if cost_surface[nr, nc] >= max_cost_threshold:
                         continue
                     
                     # Diagonal moves cost sqrt(2) times more
@@ -1315,8 +1639,8 @@ class TerrainAwareLayoutGenerator:
                     counter += 1
                     heapq.heappush(heap, (new_f, counter, new_g, (nr, nc), path + [(nr, nc)]))
         
-        logger.warning(f"A* exhausted {iterations} iterations from {start} to {end}")
-        return []
+        logger.warning(f"A* exhausted {iterations} iterations or budget from {start} to {end}")
+        return [], 0.0
     
     def _compute_cut_fill(
         self,
@@ -1382,7 +1706,7 @@ class TerrainAwareLayoutGenerator:
             })
         
         # --- Road corridor earthwork ---
-        road_cut, road_fill = self._compute_road_earthwork(
+        road_cut, road_fill, per_road = self._compute_road_earthwork(
             roads=roads,
             dem_array=dem_array,
             transform=transform,
@@ -1400,6 +1724,7 @@ class TerrainAwareLayoutGenerator:
             road_cut_m3=round(road_cut, 1),
             road_fill_m3=round(road_fill, 1),
             per_asset=per_asset,
+            per_road=per_road,
         )
     
     def _compute_road_earthwork(
@@ -1409,73 +1734,120 @@ class TerrainAwareLayoutGenerator:
         transform: Affine,
         cell_size_m: float,
         road_width_m: float = 5.0,
-    ) -> tuple[float, float]:
+    ) -> tuple[float, float, list[dict]]:
         """
-        Compute cut/fill volumes for road corridors.
+        Compute cut/fill volumes for road corridors using buffer polygons.
         
-        For each road segment, samples elevations along the path and
-        calculates the earthwork needed to create a smooth grade.
-        
-        Args:
-            roads: List of road segments
-            dem_array: Elevation data
-            transform: Rasterio transform
-            cell_size_m: Cell size in meters
-            road_width_m: Road corridor width
-            
-        Returns:
-            Tuple of (total_cut_m3, total_fill_m3)
+        Calculates side-hill cut/fill by comparing ground elevation at each pixel
+        in the corridor to the elevation of the nearest point on the centerline.
         """
         total_cut = 0.0
         total_fill = 0.0
+        per_road = []
         
+        from rasterio.features import rasterize
         height, width = dem_array.shape
+        cell_area = cell_size_m ** 2
         
         for road in roads:
             if road.geometry is None or road.geometry.is_empty:
                 continue
             
-            # Sample points along road
-            coords = list(road.geometry.coords)
-            if len(coords) < 2:
+            # Skip extremely short roads
+            if road.length_m < 1.0:
                 continue
             
-            # Convert coordinates to grid positions and get elevations
-            elevations = []
-            positions = []
-            for x, y in coords:
-                try:
-                    row, col = rowcol(transform, x, y)
-                    if 0 <= row < height and 0 <= col < width:
-                        elev = dem_array[row, col]
-                        if elev > -9000:  # Valid data
-                            elevations.append(elev)
-                            positions.append((row, col))
-                except Exception:
+            # Create road corridor polygon
+            # Buffer needs to be in coordinate units
+            buffer_distance = road.width_m / 2.0
+            if abs(transform[0]) < 1.0:
+                # Convert meters to degrees (approx)
+                buffer_distance /= 111000.0
+                
+            corridor = road.geometry.buffer(buffer_distance, cap_style=2) # Flat cap
+            
+            try:
+                # Rasterize corridor to get mask
+                mask = rasterize(
+                    [(corridor, 1)],
+                    out_shape=(height, width),
+                    transform=transform,
+                    fill=0,
+                    dtype=np.uint8,
+                ).astype(bool)
+                
+                # Get DEM pixels under road
+                rows, cols = np.where(mask)
+                if len(rows) == 0:
                     continue
             
-            if len(elevations) < 2:
+                # Sample centerline densely for KDTree
+                # Sampling interval: smaller of 1/2 cell size or 1m
+                step = min(1.0, cell_size_m / 2.0)
+                if abs(transform[0]) < 1.0:
+                    step /= 111000.0
+                
+                # Generate sample points along centerline
+                length_coord = road.geometry.length
+                num_steps = int(length_coord / step) + 2
+                sample_points = [road.geometry.interpolate(min(i * step, length_coord)) for i in range(num_steps)]
+                
+                # Get Ground Z for each sample point (Centerline Z)
+                sample_coords = []
+                sample_zs = []
+                
+                for p in sample_points:
+                    sample_coords.append((p.x, p.y))
+                    r, c = rowcol(transform, p.x, p.y)
+                    z = 0.0
+                    if 0 <= r < height and 0 <= c < width:
+                        val = dem_array[r, c]
+                        if val > -9000:
+                            z = float(val)
+                    sample_zs.append(z)
+                
+                # Build KDTree for 2D lookup
+                if not sample_coords:
+                    continue
+            
+                tree = cKDTree(sample_coords)
+                
+                # Get coordinates of all pixels in mask
+                pixel_xs, pixel_ys = xy(transform, rows, cols)
+                # xy returns tuple of lists/arrays. Ensure they are separate args to column_stack
+                pixel_points = np.column_stack((pixel_xs, pixel_ys))
+                
+                # Find nearest centerline point for each pixel
+                dists, indices = tree.query(pixel_points)
+                
+                # Target Z = Z of nearest centerline point (flat road cross-section)
+                target_zs = np.array([sample_zs[i] for i in indices])
+                
+                # Actual Z = DEM at pixel
+                actual_zs = dem_array[rows, cols]
+                
+                # Calculate volume
+                diffs = actual_zs - target_zs
+                valid = (actual_zs > -9000)
+                
+                road_cut = np.sum(diffs[valid & (diffs > 0)]) * cell_area
+                road_fill = np.sum(-diffs[valid & (diffs < 0)]) * cell_area
+                
+                total_cut += road_cut
+                total_fill += road_fill
+                
+                per_road.append({
+                    "road_name": road.name,
+                    "cut_m3": round(road_cut, 1),
+                    "fill_m3": round(road_fill, 1),
+                    "length_m": road.length_m
+                })
+                
+            except Exception as e:
+                logger.warning(f"Failed to compute earthwork for road {road.name}: {e}")
                 continue
-            
-            # Calculate target grade line (linear interpolation from start to end)
-            start_elev = elevations[0]
-            end_elev = elevations[-1]
-            n_points = len(elevations)
-            target_elevations = np.linspace(start_elev, end_elev, n_points)
-            
-            # Calculate cut/fill at each point
-            # Road corridor area per segment = road_width * segment_length
-            segment_length = road.length_m / max(n_points - 1, 1)
-            segment_area = road_width_m * segment_length
-            
-            for i, (actual, target) in enumerate(zip(elevations, target_elevations)):
-                dz = actual - target
-                if dz > 0:
-                    total_cut += dz * segment_area
-                else:
-                    total_fill += abs(dz) * segment_area
         
-        return total_cut, total_fill
+        return total_cut, total_fill, per_road
     
     @staticmethod
     def to_geojson_feature_collection(
@@ -1523,6 +1895,12 @@ class TerrainAwareLayoutGenerator:
                     "length_m": road.length_m,
                     "width_m": road.width_m,
                     "max_grade_pct": road.max_grade_pct,
+                    "road_class": road.road_class,
+                    "stationing": road.stationing,
+                    "kpi_flags": road.kpi_flags,
+                    "retry_count": road.retry_count,
+                    "failure_reason": road.failure_reason,
+                    "cumulative_cost": road.max_cumulative_cost,
                 },
             }
             features.append(feature)
@@ -1542,6 +1920,7 @@ class TerrainAwareLayoutGenerator:
                 "total_cut_m3": cut_fill.total_cut_m3,
                 "total_fill_m3": cut_fill.total_fill_m3,
                 "net_balance_m3": cut_fill.net_balance_m3,
+                "per_road_earthwork": cut_fill.per_road,
             }
         
         return result

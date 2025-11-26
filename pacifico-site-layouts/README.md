@@ -274,12 +274,16 @@ See `PHASE_D_PROGRESS.md` in the project root for current Phase D implementation
 - ✅ **C-09**: Health checks & graceful shutdown (60-second stopTimeout)
 - ✅ **C-10**: Operational runbook documentation
 
-**New Features:**
+**New Features (Phase C & D):**
 - Async layout generation with job queuing (SQS)
 - Frontend polling with progress indicators
 - S3 lifecycle policies for cost optimization
 - Enhanced monitoring with CloudWatch alarms
 - Production-ready health checks
+- **Persistent terrain overlays** (Nov 26) — slope heatmaps, contours, and buildable areas saved and cached
+  - Overlays persist across browser refreshes and client-side navigation
+  - Variant-aware caching supports multiple configurations per site
+  - Instant toggle after initial generation
 
 **Enable Async Mode:**
 ```hcl
@@ -375,6 +379,12 @@ backend_env_vars = {
    - 4 new REST endpoints with terrain data visualization
    - Scikit-image contour extraction + rasterio polygon vectorization
    - Interactive map layers with dynamic legends
+   - **Nov 26 Update**: Persistent overlay caching — generated GeoJSON saved to S3 and cached in DB
+     - Slope heatmaps, contours, and buildable areas survive page refresh
+     - Variant-aware caching: each interval/asset-type combination cached independently
+     - New `TerrainCache` fields: `variant_key`, `terrain_type` (contours, heatmap, buildable_area)
+     - Toggle overlays instantly after first generation
+
 2. ✅ **D-02** - Cut/fill volume display in sidebar with net earthwork indicators (Nov 25)
    - Earthwork section showing cut/fill totals in thousands-separator format
    - Export/Import/Balanced net earthwork indicators with color coding
@@ -397,7 +407,65 @@ backend_env_vars = {
    - Strategy-specific generator configs (spacing, slope weight, capacity multiplier)
    - Variant tabs UI with best-in-category badges
    - Expandable comparison table showing all metrics across variants
-5. ⏳ **D-05** - Layout variants & comparison with multiple strategies
+
+---
+
+## Phase E: Gap Implementation (Phases 1-4, ✅ COMPLETE)
+
+**Status:** Complete — All 4 phases implemented from PRD alignment plan
+
+**Phase 1 - Documentation & Exposure (✅ Complete):**
+- ✅ Updated `docs/LAYOUT_GENERATION_EXPLAINED.md` with comprehensive architecture documentation
+  - Service responsibilities and interactions
+  - Asset placement algorithm with slope limits and strategies (4 strategies: Balanced, Density, Low Earthwork, Clustered)
+  - Road network generation (A* pathfinding, MST vs Star topology)
+  - Earthwork calculation for pads and corridors
+  - Exclusion zone handling
+  - Export formats and API reference
+- ✅ Created `docs/ARCHITECTURE_OVERVIEW.md` with system-wide architecture
+  - High-level component diagram
+  - Directory structure mapping
+  - Data flow for sync/async generation
+  - Technology stack and database schema
+  - Configuration reference for environment setup
+
+**Phase 2 - Regulatory & Environmental Constraints (✅ Complete):**
+- ✅ Created `RegulatoryService` with provider abstraction layer
+  - `RegulatoryDataProvider` - Abstract interface for pluggable data sources
+  - `MockRegulatoryProvider` - Generates synthetic regulatory features (wetlands, utilities, setbacks)
+  - Supports 9 layer types: wetland, floodplain, water_body, species_habitat, setback, easement, right_of_way, utility_corridor, existing_structure
+- ✅ New API endpoints:
+  - `GET /api/sites/regulatory-layers` - List available regulatory layers
+  - `POST /api/sites/{site_id}/regulatory-sync` - Fetch regulatory data and auto-populate exclusion zones
+- ✅ Automatic zone type mapping with defaults (buffers, cost multipliers)
+
+**Phase 3 - User-Defined Asset Adjustments (✅ Complete):**
+- ✅ New asset manipulation endpoints:
+  - `PATCH /api/layouts/{layout_id}/assets/{asset_id}` - Move asset with validation and local terrain recompute
+  - `POST /api/layouts/{layout_id}/roads/recompute` - Regenerate road network based on current asset positions
+  - `POST /api/layouts/{layout_id}/earthwork/recompute` - Recalculate cut/fill volumes
+- ✅ Validation logic:
+  - New position must be within site boundary
+  - New position cannot be in hard exclusion zones
+  - Warnings for soft exclusion zones
+  - Re-evaluation of slope, elevation, suitability at new position
+  - Flags warning if slope exceeds asset type limits
+
+**Phase 4 - Real-Time Progress Tracking (✅ Complete):**
+- ✅ Enhanced `LayoutStatusResponse` with progress fields:
+  - `stage` - Current generation stage (fetching_dem, computing_slope, analyzing_terrain, placing_assets, generating_roads, computing_earthwork, finalizing)
+  - `progress_pct` - Progress percentage (0-100)
+  - `stage_message` - Human-readable stage description
+- ✅ Database migration (006_layout_progress_tracking.py):
+  - Added `stage`, `progress_pct`, `stage_message` columns to layouts table
+  - Auto-migration for existing records
+- ✅ Frontend updates:
+  - Enhanced `LayoutStatusResponse` TypeScript interface
+  - Progress bar now shows actual `progress_pct` instead of fixed values
+  - Stage-specific messages displayed to user
+  - Elapsed time display during generation
+
+---
 
 **Testing:**
 - ✅ All 22 backend tests passing in <1 second

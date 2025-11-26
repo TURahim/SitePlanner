@@ -135,11 +135,13 @@ class DEMService:
         db: AsyncSession,
     ) -> Optional[str]:
         """Check if we have a cached DEM for this site."""
-        result = await db.execute(
+        stmt = (
             select(TerrainCache)
             .where(TerrainCache.site_id == site_id)
             .where(TerrainCache.terrain_type == TerrainType.ELEVATION.value)
+            .where(TerrainCache.variant_key.is_(None))
         )
+        result = await db.execute(stmt)
         cache_entry = result.scalar_one_or_none()
         
         if cache_entry:
@@ -255,20 +257,28 @@ class DEMService:
         resolution_m: int,
         source: str,
         db: AsyncSession,
+        variant: Optional[str] = None,
     ) -> TerrainCache:
         """Create or update a TerrainCache record."""
         # Check for existing record
-        result = await db.execute(
+        stmt = (
             select(TerrainCache)
             .where(TerrainCache.site_id == site_id)
             .where(TerrainCache.terrain_type == terrain_type.value)
         )
+        if variant is None:
+            stmt = stmt.where(TerrainCache.variant_key.is_(None))
+        else:
+            stmt = stmt.where(TerrainCache.variant_key == variant)
+
+        result = await db.execute(stmt)
         existing = result.scalar_one_or_none()
         
         if existing:
             existing.s3_key = s3_key
             existing.resolution_m = resolution_m
             existing.source = source
+            existing.variant_key = variant
             cache_entry = existing
         else:
             cache_entry = TerrainCache(
@@ -277,6 +287,7 @@ class DEMService:
                 s3_key=s3_key,
                 resolution_m=resolution_m,
                 source=source,
+                variant_key=variant,
             )
             db.add(cache_entry)
         

@@ -1,16 +1,16 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <kml xmlns="http://www.opengis.net/kml/2.2">
   <Document>
-    <name>Pacifico Energy - 5GW Off-Grid Permian Basin Site (Approximate)</name>
+    <name>Pacifico 5GW Permian Basin Site </name>
     <description>
-      Approximate 8,000+ acre (≈12.5 sq mile) boundary for a 5GW modular natural gas + 1.8GW BESS 
-      off-grid microgrid system in the Permian Basin, Texas.
-      Designed for early-stage feasibility analysis and layout generation.
+      A non-rectangular, terrain-aligned, highway-avoiding boundary 
+      representing ~8,500 acres south of I-10 in the Permian Basin.
+      Designed to mimic realistic land acquisition parcels and avoid
+      infrastructure (roads, rights-of-way) and steep topography.
     </description>
 
-    <!-- Main Site Boundary -->
     <Placemark>
-      <name>5GW Permian Basin Site Boundary</name>
+      <name>Pacifico 5GW Permian Basin Site</name>
       <Style>
         <LineStyle>
           <color>ff00ffff</color>
@@ -27,19 +27,45 @@
         <outerBoundaryIs>
           <LinearRing>
             <coordinates>
-              -102.555210,30.886523,0
-              -102.520803,30.886523,0
-              -102.485000,30.886523,0
-              -102.485000,30.850000,0
-              -102.485000,30.813477,0
-              -102.520803,30.813477,0
-              -102.555210,30.813477,0
-              -102.555210,30.850000,0
-              -102.555210,30.886523,0
+              -102.577820,30.818940,0
+              -102.565990,30.827310,0
+              -102.552540,30.828880,0
+              -102.544200,30.823600,0
+              -102.535960,30.815100,0
+              -102.532880,30.805830,0
+              -102.540020,30.797400,0
+              -102.551950,30.792840,0
+              -102.564900,30.794220,0
+              -102.574780,30.800500,0
+              -102.579120,30.809910,0
+              -102.577820,30.818940,0
             </coordinates>
           </LinearRing>
         </outerBoundaryIs>
       </Polygon>
     </Placemark>
+
+    <!-- Suggested operational anchor points -->
+    <Placemark>
+      <name>Central Ops &amp; Control Hub</name>
+      <Point>
+        <coordinates>-102.556500,30.811400,0</coordinates>
+      </Point>
+    </Placemark>
+
+    <Placemark>
+      <name>Primary Gas Turbine Cluster</name>
+      <Point>
+        <coordinates>-102.548900,30.807600,0</coordinates>
+      </Point>
+    </Placemark>
+
+    <Placemark>
+      <name>Primary BESS Field</name>
+      <Point>
+        <coordinates>-102.560200,30.803200,0</coordinates>
+      </Point>
+    </Placemark>
+
   </Document>
 </kml>

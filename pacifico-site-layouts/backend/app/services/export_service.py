@@ -37,6 +37,11 @@ SLOPE_LIMITS = {
 }
 
 
+def _safe_number(value: Optional[float], default: float = 0.0) -> float:
+    """Return a numeric value that is safe to format (treat None as default)."""
+    return value if value is not None else default
+
+
 class ExportService:
     """
     Service for generating layout exports in various formats.
@@ -112,6 +117,7 @@ class ExportService:
             raise
         
         kml = simplekml.Kml(name=f"{site_name} Layout")
+        layout_data = layout_data or {}
         
         # Asset type colors (AABBGGRR format for KML)
         ASSET_COLORS = {
@@ -141,11 +147,14 @@ class ExportService:
             # Add site info to description
             desc_parts = [f"Site: {site_name}"]
             if layout_data:
-                desc_parts.append(f"Total Capacity: {layout_data.get('total_capacity_kw', 0):,.0f} kW")
-                if layout_data.get("cut_volume_m3"):
-                    desc_parts.append(f"Cut Volume: {layout_data['cut_volume_m3']:,.0f} m³")
-                if layout_data.get("fill_volume_m3"):
-                    desc_parts.append(f"Fill Volume: {layout_data['fill_volume_m3']:,.0f} m³")
+                total_capacity = _safe_number(layout_data.get("total_capacity_kw"))
+                desc_parts.append(f"Total Capacity: {total_capacity:,.0f} kW")
+                cut_volume = layout_data.get("cut_volume_m3")
+                if cut_volume:
+                    desc_parts.append(f"Cut Volume: {_safe_number(cut_volume):,.0f} m³")
+                fill_volume = layout_data.get("fill_volume_m3")
+                if fill_volume:
+                    desc_parts.append(f"Fill Volume: {_safe_number(fill_volume):,.0f} m³")
             pol.description = "\n".join(desc_parts)
         
         # Add assets with D-04-04 slope/buildability styling
@@ -168,9 +177,10 @@ class ExportService:
             slope_limit = SLOPE_LIMITS.get(asset_type, 15.0)
             actual_slope = asset.get("slope_deg")
             
+            capacity_kw = _safe_number(asset.get("capacity_kw"))
             desc_parts = [
                 f"Type: {asset_type.replace('_', ' ').title()}",
-                f"Capacity: {asset.get('capacity_kw', 0):,.0f} kW",
+                f"Capacity: {capacity_kw:,.0f} kW",
             ]
             if asset.get("elevation_m"):
                 desc_parts.append(f"Elevation: {asset['elevation_m']:.1f} m")
@@ -219,23 +229,32 @@ class ExportService:
             line.style.linestyle.color = ROAD_GRADE_COLORS[grade_class]
             line.style.linestyle.width = 4
             
-            desc_parts = [f"Length: {road.get('length_m', 0):.0f} m"]
-            if road.get("max_grade_pct"):
-                desc_parts.append(f"Max Grade: {road['max_grade_pct']:.1f}% ({grade_class.title()})")
+            length_m = _safe_number(road.get("length_m"))
+            desc_parts = [f"Length: {length_m:.0f} m"]
+            if road.get("max_grade_pct") is not None:
+                desc_parts.append(
+                    f"Max Grade: {road['max_grade_pct']:.1f}% ({grade_class.title()})"
+                )
             line.description = "\n".join(desc_parts)
         
         # D-04-04: Add terrain summary as a document description
         if terrain_summary:
             elev = terrain_summary.get("elevation", {})
             slope = terrain_summary.get("slope", {})
+            elev_min = _safe_number(elev.get("min_m"))
+            elev_max = _safe_number(elev.get("max_m"))
+            elev_range = _safe_number(elev.get("range_m"))
+            slope_min = _safe_number(slope.get("min_deg"))
+            slope_max = _safe_number(slope.get("max_deg"))
+            slope_mean = _safe_number(slope.get("mean_deg"))
             kml.document.description = (
                 f"Terrain Summary for {site_name}\n\n"
                 f"DEM Source: {terrain_summary.get('dem_source', 'Unknown')}\n"
                 f"Resolution: {terrain_summary.get('dem_resolution_m', 'N/A')} m\n\n"
-                f"Elevation: {elev.get('min_m', 0):.0f} - {elev.get('max_m', 0):.0f} m "
-                f"(range: {elev.get('range_m', 0):.0f} m)\n"
-                f"Slope: {slope.get('min_deg', 0):.1f}° - {slope.get('max_deg', 0):.1f}° "
-                f"(mean: {slope.get('mean_deg', 0):.1f}°)\n"
+                f"Elevation: {elev_min:.0f} - {elev_max:.0f} m "
+                f"(range: {elev_range:.0f} m)\n"
+                f"Slope: {slope_min:.1f}° - {slope_max:.1f}° "
+                f"(mean: {slope_mean:.1f}°)\n"
             )
         
         # Save as KMZ (zipped KML)
@@ -353,10 +372,11 @@ class ExportService:
         story.append(Paragraph("Site Summary", heading_style))
         
         site_area_ha = site_area_m2 / 10000
+        total_capacity_kw = _safe_number(layout_data.get("total_capacity_kw"))
         site_data = [
             ["Property", "Value"],
             ["Site Area", f"{site_area_ha:.2f} hectares ({site_area_m2:,.0f} m²)"],
-            ["Total Capacity", f"{layout_data.get('total_capacity_kw', 0):,.1f} kW"],
+            ["Total Capacity", f"{total_capacity_kw:,.1f} kW"],
             ["Asset Count", str(len(assets))],
             ["Road Network", f"{sum(r.get('length_m', 0) or 0 for r in roads):,.0f} m"],
         ]
@@ -398,15 +418,21 @@ class ExportService:
             
             elev = terrain_summary.get("elevation", {})
             slope = terrain_summary.get("slope", {})
+            elev_min = _safe_number(elev.get("min_m"))
+            elev_max = _safe_number(elev.get("max_m"))
+            elev_mean = _safe_number(elev.get("mean_m"))
+            slope_min = _safe_number(slope.get("min_deg"))
+            slope_max = _safe_number(slope.get("max_deg"))
+            slope_mean = _safe_number(slope.get("mean_deg"))
             
             terrain_data = [
                 ["Property", "Value"],
                 ["DEM Source", terrain_summary.get("dem_source", "N/A")],
                 ["DEM Resolution", f"{terrain_summary.get('dem_resolution_m', 'N/A')} m"],
-                ["Elevation Range", f"{elev.get('min_m', 0):.0f} - {elev.get('max_m', 0):.0f} m"],
-                ["Elevation Mean", f"{elev.get('mean_m', 0):.1f} m"],
-                ["Slope Range", f"{slope.get('min_deg', 0):.1f}° - {slope.get('max_deg', 0):.1f}°"],
-                ["Slope Mean", f"{slope.get('mean_deg', 0):.1f}°"],
+                ["Elevation Range", f"{elev_min:.0f} - {elev_max:.0f} m"],
+                ["Elevation Mean", f"{elev_mean:.1f} m"],
+                ["Slope Range", f"{slope_min:.1f}° - {slope_max:.1f}°"],
+                ["Slope Mean", f"{slope_mean:.1f}°"],
             ]
             
             terrain_table = Table(terrain_data, colWidths=[2*inch, 3*inch])
@@ -433,10 +459,12 @@ class ExportService:
                 
                 slope_dist_data = [["Slope Range", "Percentage", "Area (m²)"]]
                 for bucket in distribution:
+                    pct = _safe_number(bucket.get("percentage"))
+                    area = _safe_number(bucket.get("area_m2"))
                     slope_dist_data.append([
                         bucket.get("range", ""),
-                        f"{bucket.get('percentage', 0):.1f}%",
-                        f"{bucket.get('area_m2', 0):,.0f}",
+                        f"{pct:.1f}%",
+                        f"{area:,.0f}",
                     ])
                 
                 slope_dist_table = Table(slope_dist_data, colWidths=[2*inch, 1.5*inch, 1.5*inch])
@@ -464,11 +492,13 @@ class ExportService:
                 
                 buildable_data = [["Asset Type", "Max Slope", "Buildable Area", "% of Site"]]
                 for ba in buildable_areas:
+                    area_ha = _safe_number(ba.get("area_ha"))
+                    pct = _safe_number(ba.get("percentage"))
                     buildable_data.append([
                         ba.get("asset_type", "").replace("_", " ").title(),
                         f"{ba.get('max_slope_deg', 0)}°",
-                        f"{ba.get('area_ha', 0):.2f} ha",
-                        f"{ba.get('percentage', 0):.1f}%",
+                        f"{area_ha:.2f} ha",
+                        f"{pct:.1f}%",
                     ])
                 
                 buildable_table = Table(buildable_data, colWidths=[1.8*inch, 1.2*inch, 1.5*inch, 1*inch])
@@ -534,10 +564,11 @@ class ExportService:
             
             detail_data = [["Name", "Type", "Capacity", "Elevation", "Slope"]]
             for asset in assets:
+                asset_capacity = _safe_number(asset.get("capacity_kw"))
                 detail_data.append([
                     asset.get("name", "-"),
                     asset.get("asset_type", "-").replace("_", " ").title(),
-                    f"{asset.get('capacity_kw', 0):.0f} kW",
+                    f"{asset_capacity:.0f} kW",
                     f"{asset.get('elevation_m', 0):.1f} m" if asset.get('elevation_m') else "-",
                     f"{asset.get('slope_deg', 0):.1f}°" if asset.get('slope_deg') else "-",
                 ])
@@ -567,10 +598,11 @@ class ExportService:
             road_data = [["Road", "Length (m)", "Max Grade (%)"]]
             for road in roads:
                 grade = road.get("max_grade_pct")
+                length_m = _safe_number(road.get("length_m"))
                 grade_str = f"{grade:.1f}%" if grade is not None else "-"
                 road_data.append([
                     road.get("name", "-"),
-                    f"{road.get('length_m', 0):.0f}",
+                    f"{length_m:.0f}",
                     grade_str,
                 ])
             
@@ -644,12 +676,15 @@ class ExportService:
             summary_writer.writerow(["Site Name", site_name])
             summary_writer.writerow(["Site Area (m²)", f"{site_area_m2:.0f}"])
             summary_writer.writerow(["Site Area (ha)", f"{site_area_m2 / 10000:.2f}"])
-            summary_writer.writerow(["Total Capacity (kW)", f"{layout_data.get('total_capacity_kw', 0):.1f}"])
+            total_capacity = _safe_number(layout_data.get("total_capacity_kw"))
+            summary_writer.writerow(["Total Capacity (kW)", f"{total_capacity:.1f}"])
             summary_writer.writerow(["Asset Count", len(assets)])
             summary_writer.writerow(["Road Count", len(roads)])
             summary_writer.writerow(["Total Road Length (m)", f"{sum(r.get('length_m', 0) or 0 for r in roads):.0f}"])
-            summary_writer.writerow(["Cut Volume (m³)", f"{layout_data.get('cut_volume_m3', 0):.0f}"])
-            summary_writer.writerow(["Fill Volume (m³)", f"{layout_data.get('fill_volume_m3', 0):.0f}"])
+            cut_volume = _safe_number(layout_data.get("cut_volume_m3"))
+            fill_volume = _safe_number(layout_data.get("fill_volume_m3"))
+            summary_writer.writerow(["Cut Volume (m³)", f"{cut_volume:.0f}"])
+            summary_writer.writerow(["Fill Volume (m³)", f"{fill_volume:.0f}"])
             summary_writer.writerow(["Generated At", datetime.utcnow().isoformat()])
             zf.writestr("summary.csv", summary_csv.getvalue())
             
@@ -685,11 +720,13 @@ class ExportService:
             ])
             for road in roads:
                 coords = road.get("geometry", {}).get("coordinates", [])
+                length_val = road.get("length_m")
+                grade_val = road.get("max_grade_pct")
                 roads_writer.writerow([
                     road.get("id", ""),
                     road.get("name", ""),
-                    f"{road.get('length_m', 0):.0f}" if road.get('length_m') else "",
-                    f"{road.get('max_grade_pct', 0):.1f}" if road.get('max_grade_pct') else "",
+                    f"{_safe_number(length_val):.0f}" if length_val is not None else "",
+                    f"{grade_val:.1f}" if grade_val is not None else "",
                     len(coords),
                 ])
             zf.writestr("roads.csv", roads_csv.getvalue())

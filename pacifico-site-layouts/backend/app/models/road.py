@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Optional
 
 from geoalchemy2 import Geometry
 from sqlalchemy import Float, ForeignKey, String
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSON, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin, UUIDMixin
@@ -52,6 +52,40 @@ class Road(Base, UUIDMixin, TimestampMixin):
     # Maximum grade along road (percent)
     max_grade_pct: Mapped[Optional[float]] = mapped_column(
         Float,
+        nullable=True,
+    )
+    
+    # Road class (spine, secondary, tertiary)
+    road_class: Mapped[Optional[str]] = mapped_column(
+        String(50),
+        nullable=True,
+    )
+    
+    # Parent segment ID for hierarchy
+    parent_segment_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("roads.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    
+    # KPI fields
+    avg_grade_pct: Mapped[Optional[float]] = mapped_column(
+        Float,
+        nullable=True,
+    )
+    
+    max_cumulative_cost: Mapped[Optional[float]] = mapped_column(
+        Float,
+        nullable=True,
+    )
+    
+    kpi_flags: Mapped[Optional[dict]] = mapped_column(
+        JSON,
+        nullable=True,
+    )
+    
+    stationing_json: Mapped[Optional[dict]] = mapped_column(
+        JSON,
         nullable=True,
     )
     

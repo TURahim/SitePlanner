@@ -41,6 +41,8 @@ export interface Site {
   name: string;
   area_m2: number;
   boundary: Polygon;
+  entry_point?: Point;
+  entry_point_metadata?: any;
   created_at: string;
   updated_at: string;
 }
@@ -85,6 +87,10 @@ export interface Road {
   width_m?: number;
   geometry: LineString;
   max_grade_pct?: number;
+  road_class?: string;
+  max_cumulative_cost?: number;
+  stationing_json?: any;
+  kpi_flags?: any;
 }
 
 export interface Layout {
@@ -152,12 +158,31 @@ export interface LayoutEnqueueResponse {
 }
 
 /**
- * Response from status polling endpoint (C-04)
+ * Layout generation stages (Phase 4 GAP)
+ */
+export type LayoutGenerationStage = 
+  | 'queued'
+  | 'fetching_dem'
+  | 'computing_slope'
+  | 'analyzing_terrain'
+  | 'placing_assets'
+  | 'generating_roads'
+  | 'computing_earthwork'
+  | 'finalizing'
+  | 'completed'
+  | 'failed';
+
+/**
+ * Response from status polling endpoint (C-04, enhanced Phase 4)
  */
 export interface LayoutStatusResponse {
   layout_id: string;
   status: LayoutStatus;
   error_message?: string;
+  // Phase 4: Progress tracking
+  stage?: LayoutGenerationStage;
+  progress_pct?: number;
+  stage_message?: string;
   // Populated only when status is 'completed'
   total_capacity_kw?: number;
   asset_count?: number;
@@ -455,6 +480,7 @@ export interface ExclusionZone {
   zone_type: ExclusionZoneType;
   geometry: Polygon;
   buffer_m: number;
+  cost_multiplier?: number;
   description?: string;
   area_m2?: number;
   color: string;
