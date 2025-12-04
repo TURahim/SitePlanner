@@ -39,23 +39,17 @@ class Settings(BaseSettings):
     cognito_client_id: str = ""
     
     # CORS - allowed origins for cross-origin requests
-    # Default includes local development servers
-    # TODO: Add production frontend URLs here (e.g., CloudFront distribution URL)
     cors_origins: list[str] = [
         "http://localhost:5173",  # Vite dev server
         "http://localhost:3000",  # Alternative dev server
+        "https://microgridcalculator.tahmeedrahim.com",  # Production frontend
+        "https://d178b416db7o5o.cloudfront.net",  # CloudFront distribution
     ]
     
     # Layout Generation
-    # Set to True in AWS environments where terrain services (S3, py3dep) work properly
-    # TODO: Fix async/greenlet issue - terrain services use sync calls (boto3, py3dep)
-    #       that break SQLAlchemy's async session context when run in thread pools.
-    #       See: https://sqlalche.me/e/20/xd2s
-    #       Potential fixes:
-    #       1. Use aioboto3 instead of boto3 for S3 operations
-    #       2. Use httpx with async for py3dep-like functionality
-    #       3. Create separate database sessions for post-thread operations
-    use_terrain: bool = False  # Disabled locally, enable in AWS with USE_TERRAIN=true
+    # Terrain-aware layout generation is enabled by default.
+    # Set USE_TERRAIN=false to fall back to the dummy generator for debugging.
+    use_terrain: bool = True
     
     @field_validator("cors_origins", mode="before")
     @classmethod

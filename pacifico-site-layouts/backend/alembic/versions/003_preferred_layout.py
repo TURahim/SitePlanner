@@ -43,3 +43,8 @@ def downgrade() -> None:
     op.drop_index('ix_sites_preferred_layout_id', table_name='sites')
     op.drop_column('sites', 'preferred_layout_id')
 
+
+
+
+
+

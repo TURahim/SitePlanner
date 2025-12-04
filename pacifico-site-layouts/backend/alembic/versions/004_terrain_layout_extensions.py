@@ -96,3 +96,8 @@ def downgrade() -> None:
     op.drop_column('sites', 'entry_point_metadata')
     op.drop_column('sites', 'entry_point')
 
+
+
+
+
+

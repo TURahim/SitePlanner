@@ -173,6 +173,7 @@ class TerrainAwareLayoutGenerator:
         "battery": 4.0,       # Reduced from 5° - BESS needs level ground
         "generator": 5.0,     # Kept at 5° - generators need flat pads
         "substation": 3.0,    # Reduced from 5° - critical infrastructure must be very level
+        "wind_turbine": 15.0, # Phase 5: Wind turbines more tolerant to slope
     }
     
     # Optimal slope targets for scoring (positions below this get bonus)
@@ -181,6 +182,7 @@ class TerrainAwareLayoutGenerator:
         "battery": 2.0,       # Prefer slopes under 2°
         "generator": 3.0,     # Prefer slopes under 3°
         "substation": 1.0,    # Prefer nearly flat
+        "wind_turbine": 8.0,  # Phase 5: Prefer moderate slopes for wind exposure
     }
     
     # Asset configurations
@@ -208,6 +210,12 @@ class TerrainAwareLayoutGenerator:
             "weight": 0.05,
             "footprint": (20, 15),
             "pad_size_m": 25,
+        },
+        "wind_turbine": {
+            "capacity_range": (1000, 5000),  # kW per turbine (larger than solar)
+            "weight": 0.0,  # Phase 5: Not selected by default, explicit placement only
+            "footprint": (60, 60),  # Larger footprint for turbine base
+            "pad_size_m": 80,  # Larger grading pad
         },
     }
     
@@ -266,6 +274,7 @@ class TerrainAwareLayoutGenerator:
         self, 
         target_capacity_kw: float = 1000.0,
         strategy: LayoutStrategy = LayoutStrategy.BALANCED,
+        generation_profile: Optional[str] = None,
     ):
         """
         Initialize the generator.
@@ -273,10 +282,57 @@ class TerrainAwareLayoutGenerator:
         Args:
             target_capacity_kw: Target total capacity in kW
             strategy: D-05 - Optimization strategy for layout generation
+            generation_profile: Optional generation profile (solar_farm, gas_bess, wind_hybrid, hybrid)
         """
         self.target_capacity_kw = target_capacity_kw
         self.strategy = strategy
         self.strategy_config = self.STRATEGY_CONFIGS.get(strategy, self.STRATEGY_CONFIGS[LayoutStrategy.BALANCED])
+        self._block_asset_counter = 0
+        
+        # Block layout tracking (populated during asset placement)
+        self._block_layout_metadata: Optional[dict[str, Any]] = None
+        
+        # Apply generation profile if provided
+        self._profile_config = None
+        if generation_profile:
+            self._apply_generation_profile(generation_profile)
+    
+    def _apply_generation_profile(self, profile_name: str) -> None:
+        """
+        Apply a generation profile to override default asset configs.
+        
+        Args:
+            profile_name: Name of the profile (solar_farm, gas_bess, wind_hybrid, hybrid)
+        """
+        from app.services.generation_profiles import GenerationProfile, get_profile
+        
+        try:
+            profile_enum = GenerationProfile(profile_name)
+            profile = get_profile(profile_enum)
+            self._profile_config = profile
+            
+            # Override ASSET_CONFIGS with profile settings
+            self.ASSET_CONFIGS = {}
+            self.SLOPE_LIMITS = {}
+            self.SLOPE_OPTIMAL = {}
+            
+            for asset_type, config in profile.asset_configs.items():
+                self.ASSET_CONFIGS[asset_type] = {
+                    "capacity_range": config.capacity_range,
+                    "weight": config.weight,
+                    "footprint": config.footprint,
+                    "pad_size_m": config.pad_size_m,
+                }
+                self.SLOPE_LIMITS[asset_type] = config.slope_limit_deg
+                self.SLOPE_OPTIMAL[asset_type] = config.optimal_slope_deg
+            
+            # Override min spacing from profile
+            self.MIN_SPACING_M = profile.min_spacing_m
+            
+            logger.info(f"Applied generation profile: {profile.name} with {len(self.ASSET_CONFIGS)} asset types")
+            
+        except ValueError:
+            logger.warning(f"Unknown generation profile: {profile_name}, using defaults")
     
     def generate(
         self,
@@ -532,6 +588,18 @@ class TerrainAwareLayoutGenerator:
         placed_positions = []  # Track placed asset grid positions
         placed_footprints = []  # Track actual footprint polygons for collision detection
         
+        # Structured block layouts (gas campus, etc.)
+        block_assets = self._place_block_layout_assets(
+            boundary=boundary,
+            dem_array=dem_array,
+            slope_array=slope_array,
+            buildable_masks=buildable_masks,
+            transform=transform,
+            cell_size_m=cell_size_m,
+        )
+        if block_assets:
+            return block_assets
+        
         # Determine asset type distribution
         asset_types = self._select_asset_types(num_assets)
         
@@ -552,13 +620,16 @@ class TerrainAwareLayoutGenerator:
         # Pre-generate candidate positions using Poisson-disk if enabled
         if use_poisson:
             min_spacing = self.strategy_config.get("min_spacing_m", self.MIN_SPACING_M)
+            # Calculate min_spacing_cells, ensuring it's at least 1 to avoid division by zero
+            min_spacing_cells = max(1, int(min_spacing / cell_size_m))
+            
             # Use solar buildable mask (most permissive) for initial candidates
             candidate_positions = self._poisson_disk_sample(
                 buildable_masks.get("solar_array", buildable_masks["substation"]),
-                min_spacing_cells=int(min_spacing / cell_size_m),
+                min_spacing_cells=min_spacing_cells,
                 num_candidates=num_assets * 3,  # Generate extra candidates
             )
-            logger.info(f"Poisson-disk sampling generated {len(candidate_positions)} candidates")
+            logger.info(f"Poisson-disk sampling generated {len(candidate_positions)} candidates (spacing={min_spacing_cells} cells)")
         else:
             candidate_positions = None
         
@@ -605,18 +676,24 @@ class TerrainAwareLayoutGenerator:
             # Calculate optimal rotation based on aspect (for solar arrays)
             rotation = self._compute_optimal_rotation(asset_type, aspect)
             
-            # Calculate capacity
+            # Calculate capacity - scale based on target, clamped to profile range
             config = self.ASSET_CONFIGS[asset_type]
-            base_capacity = random.uniform(*config["capacity_range"])
-            # D-05: Apply strategy-specific capacity multiplier
-            capacity_multiplier = self.strategy_config.get("capacity_multiplier", 1.0)
-            scaled_capacity = base_capacity * (capacity_per_asset / 200) * capacity_multiplier
+            min_cap, max_cap = config["capacity_range"]
+            
+            if max_cap > 0:
+                # Use capacity_per_asset as target, add ±20% random variation
+                variation = random.uniform(0.8, 1.2)
+                target_cap = capacity_per_asset * variation
+                # Clamp to the profile's min/max
+                final_capacity = max(min_cap, min(target_cap, max_cap))
+            else:
+                final_capacity = 0.0
             
             asset = PlacedAsset(
                 asset_type=asset_type,
                 name=f"{asset_type.replace('_', ' ').title()} {i + 1}",
                 position=Point(x, y),
-                capacity_kw=round(scaled_capacity, 1),
+                capacity_kw=round(final_capacity, 1),
                 elevation_m=round(elevation, 1),
                 slope_deg=round(slope, 1),
                 aspect_deg=round(aspect, 1),
@@ -637,6 +714,435 @@ class TerrainAwareLayoutGenerator:
         slopes_placed = [a.slope_deg for a in assets]
         logger.info(f"Placed {len(assets)} assets: slope range {min(slopes_placed):.1f}°-{max(slopes_placed):.1f}°, avg {np.mean(slopes_placed):.1f}°")
         return assets
+
+    def _find_optimal_block_anchor(
+        self,
+        buildable_masks: dict[str, np.ndarray],
+        slope_array: np.ndarray,
+        layout_config,
+        cell_size_m: float,
+        actual_rows: int,
+        actual_cols: int,
+        sample_step: int = 15,
+    ) -> tuple[Optional[int], Optional[int]]:
+        """Find the optimal anchor point for block layout based on suitability.
+        
+        Calculates the ACTUAL footprint needed for the grid and finds the best
+        location that can accommodate the entire layout.
+        """
+        import math
+        
+        # Get a combined buildable mask (use gas_turbine mask as reference for block layouts)
+        primary_mask = buildable_masks.get("gas_turbine")
+        if primary_mask is None:
+            primary_mask = buildable_masks.get("substation")
+        if primary_mask is None:
+            primary_mask = next(iter(buildable_masks.values()), None)
+        if primary_mask is None:
+            return None, None
+        
+        height, width = primary_mask.shape
+        
+        # Calculate ACTUAL grid footprint based on blocks needed (not profile defaults)
+        grid_height_cells = int((actual_rows * layout_config.spacing_row_m) / cell_size_m)
+        grid_width_cells = int((actual_cols * layout_config.spacing_col_m) / cell_size_m)
+        half_h = grid_height_cells // 2
+        half_w = grid_width_cells // 2
+        
+        logger.info(
+            f"Block anchor search: need {actual_rows}x{actual_cols} grid, "
+            f"footprint {grid_height_cells}x{grid_width_cells} cells "
+            f"({grid_height_cells * cell_size_m:.0f}m x {grid_width_cells * cell_size_m:.0f}m)"
+        )
+        
+        # Get suitability array for gas turbines (primary asset in block layout)
+        suitability = self._suitability_scores.get("gas_turbine")
+        if suitability is None:
+            # Fall back to using inverse slope as proxy for suitability
+            suitability = 1.0 - (slope_array / 15.0)
+            suitability = np.clip(suitability, 0, 1)
+        
+        best_anchor = (None, None)
+        best_score = -float("inf")
+        
+        # Ensure we have enough margin from edges
+        margin_h = max(half_h, 10)
+        margin_w = max(half_w, 10)
+        
+        # Sample candidate anchor points across the buildable area
+        for row in range(margin_h, height - margin_h, sample_step):
+            for col in range(margin_w, width - margin_w, sample_step):
+                # Define the region this anchor would cover
+                r_min = max(0, row - half_h)
+                r_max = min(height, row + half_h)
+                c_min = max(0, col - half_w)
+                c_max = min(width, col + half_w)
+                
+                # Check if region is mostly buildable
+                region_mask = primary_mask[r_min:r_max, c_min:c_max]
+                if region_mask.size == 0:
+                    continue
+                
+                buildable_ratio = region_mask.sum() / region_mask.size
+                if buildable_ratio < 0.6:  # Require at least 60% buildable for large layouts
+                    continue
+                
+                # Calculate average suitability in the region
+                region_suitability = suitability[r_min:r_max, c_min:c_max]
+                avg_suitability = float(np.mean(region_suitability[region_mask]))
+                
+                # Calculate average slope in the region
+                region_slope = slope_array[r_min:r_max, c_min:c_max]
+                avg_slope = float(np.mean(region_slope[region_mask]))
+                
+                # Score: prioritize high suitability, low slope, and high buildable ratio
+                # Also prefer locations closer to center of buildable area
+                center_row = height // 2
+                center_col = width // 2
+                distance_from_center = math.sqrt((row - center_row)**2 + (col - center_col)**2)
+                max_distance = math.sqrt(height**2 + width**2) / 2
+                centrality = 1.0 - (distance_from_center / max_distance)
+                
+                score = (
+                    avg_suitability * 100 
+                    - avg_slope * 3  # Penalize slope more
+                    + buildable_ratio * 30  # Reward buildable area
+                    + centrality * 20  # Prefer central locations
+                )
+                
+                if score > best_score:
+                    best_score = score
+                    best_anchor = (row, col)
+        
+        if best_anchor[0] is not None:
+            logger.info(
+                f"Block anchor: found optimal at ({best_anchor[0]}, {best_anchor[1]}) "
+                f"with score={best_score:.1f}"
+            )
+        else:
+            # Fallback to center of buildable area
+            buildable_rows, buildable_cols = np.where(primary_mask)
+            if len(buildable_rows) > 0:
+                center_row = int(np.mean(buildable_rows))
+                center_col = int(np.mean(buildable_cols))
+                best_anchor = (center_row, center_col)
+                logger.info(f"Block anchor: using buildable centroid ({center_row}, {center_col})")
+        
+        return best_anchor
+
+    def _place_block_layout_assets(
+        self,
+        boundary: Polygon,
+        dem_array: np.ndarray,
+        slope_array: np.ndarray,
+        buildable_masks: dict[str, np.ndarray],
+        transform: Affine,
+        cell_size_m: float,
+    ) -> Optional[list[PlacedAsset]]:
+        """Place assets using structured block layout if profile defines one."""
+        import math
+        
+        layout_config = getattr(self._profile_config, "block_layout", None)
+        if not layout_config:
+            return None
+        
+        # Define which asset types actually generate power (vs storage/infrastructure)
+        GENERATING_ASSET_TYPES = {"gas_turbine", "solar_array", "wind_turbine", "generator"}
+        
+        # STEP 1: Calculate how many blocks we need FIRST
+        block_generation_kw = 0.0
+        generators_per_block = 0
+        for blueprint in layout_config.assets:
+            if blueprint.asset_type in GENERATING_ASSET_TYPES:
+                if blueprint.asset_type in self.ASSET_CONFIGS:
+                    cfg = self.ASSET_CONFIGS[blueprint.asset_type]
+                    min_cap, max_cap = cfg["capacity_range"]
+                    block_generation_kw += (min_cap + max_cap) / 2
+                    generators_per_block += 1
+        
+        if block_generation_kw > 0:
+            blocks_needed = max(1, int(round(self.target_capacity_kw / block_generation_kw)))
+        else:
+            blocks_needed = layout_config.rows * layout_config.columns
+        
+        # Calculate grid dimensions (prefer roughly square layout)
+        actual_cols = max(1, int(math.ceil(math.sqrt(blocks_needed))))
+        actual_rows = max(1, int(math.ceil(blocks_needed / actual_cols)))
+        
+        # Cap to reasonable site coverage
+        max_grid_dimension = 20  # Allow up to 20x20 = 400 blocks (~17 GW)
+        actual_rows = min(actual_rows, max_grid_dimension)
+        actual_cols = min(actual_cols, max_grid_dimension)
+        
+        total_blocks = actual_rows * actual_cols
+        total_generators = total_blocks * generators_per_block
+        capacity_per_generator = self.target_capacity_kw / max(1, total_generators)
+        
+        # STEP 2: Now find optimal anchor that can fit the ACTUAL grid size
+        anchor_row, anchor_col = self._find_optimal_block_anchor(
+            buildable_masks=buildable_masks,
+            slope_array=slope_array,
+            layout_config=layout_config,
+            cell_size_m=cell_size_m,
+            actual_rows=actual_rows,
+            actual_cols=actual_cols,
+        )
+        if anchor_row is None:
+            logger.warning("Block layout: could not find suitable anchor point")
+            return None
+        
+        logger.info(
+            f"Block layout: target={self.target_capacity_kw/1000:.1f}MW, "
+            f"block_gen={block_generation_kw/1000:.1f}MW, "
+            f"blocks={total_blocks} ({actual_rows}x{actual_cols}), "
+            f"generators={total_generators}, cap_per_gen={capacity_per_generator/1000:.1f}MW"
+        )
+        
+        used_mask = np.zeros_like(slope_array, dtype=bool)
+        assets: list[PlacedAsset] = []
+        
+        # Track block center positions for corridor generation
+        block_centers: list[tuple[int, int]] = []  # (row, col) in grid coords
+        row_corridors: list[list[tuple[int, int]]] = []  # blocks grouped by row
+        
+        row_center = (actual_rows - 1) / 2
+        col_center = (actual_cols - 1) / 2
+        
+        for row_idx in range(actual_rows):
+            row_blocks: list[tuple[int, int]] = []
+            for col_idx in range(actual_cols):
+                base_row = anchor_row + int(
+                    round(((row_idx - row_center) * layout_config.spacing_row_m) / cell_size_m)
+                )
+                base_col = anchor_col + int(
+                    round(((col_idx - col_center) * layout_config.spacing_col_m) / cell_size_m)
+                )
+                
+                block_centers.append((base_row, base_col))
+                row_blocks.append((base_row, base_col))
+                
+                for blueprint in layout_config.assets:
+                    target_row = base_row - int(round(blueprint.offset_north_m / cell_size_m))
+                    target_col = base_col + int(round(blueprint.offset_east_m / cell_size_m))
+                    
+                    buildable_mask = buildable_masks.get(
+                        blueprint.asset_type,
+                        buildable_masks.get("substation"),
+                    )
+                    if buildable_mask is None:
+                        buildable_mask = next(iter(buildable_masks.values()))
+                    placed_cell = self._find_nearest_buildable_cell(
+                        asset_type=blueprint.asset_type,
+                        target_row=target_row,
+                        target_col=target_col,
+                        buildable_mask=buildable_mask,
+                        used_mask=used_mask,
+                        slope_array=slope_array,
+                    )
+                    if placed_cell is None:
+                        logger.warning(f"Block layout: could not place {blueprint.asset_type}")
+                        continue
+                    
+                    # Only generators get capacity targeting; others get 0 or their natural range
+                    is_generator = blueprint.asset_type in GENERATING_ASSET_TYPES
+                    asset = self._create_asset_from_cell(
+                        asset_type=blueprint.asset_type,
+                        cell=placed_cell,
+                        dem_array=dem_array,
+                        slope_array=slope_array,
+                        transform=transform,
+                        capacity_per_asset=capacity_per_generator if is_generator else 0,
+                        is_generator=is_generator,
+                    )
+                    assets.append(asset)
+                    used_mask[placed_cell] = True
+            
+            row_corridors.append(row_blocks)
+        
+        # Global assets (single control center / substation) - these are infrastructure, not generators
+        global_asset_positions: list[tuple[int, int]] = []
+        for blueprint in layout_config.global_assets:
+            target_row = anchor_row - int(round(blueprint.offset_north_m / cell_size_m))
+            target_col = anchor_col + int(round(blueprint.offset_east_m / cell_size_m))
+            buildable_mask = buildable_masks.get(
+                blueprint.asset_type,
+                buildable_masks.get("substation"),
+            )
+            if buildable_mask is None:
+                buildable_mask = next(iter(buildable_masks.values()))
+            placed_cell = self._find_nearest_buildable_cell(
+                asset_type=blueprint.asset_type,
+                target_row=target_row,
+                target_col=target_col,
+                buildable_mask=buildable_mask,
+                used_mask=used_mask,
+                slope_array=slope_array,
+            )
+            if placed_cell is None:
+                logger.warning(f"Block layout: failed to place {blueprint.asset_type}")
+                continue
+            # Global assets (control center, substation) are infrastructure, not generators
+            asset = self._create_asset_from_cell(
+                asset_type=blueprint.asset_type,
+                cell=placed_cell,
+                dem_array=dem_array,
+                slope_array=slope_array,
+                transform=transform,
+                capacity_per_asset=0,
+                is_generator=False,
+            )
+            assets.append(asset)
+            used_mask[placed_cell] = True
+            global_asset_positions.append(placed_cell)
+        
+        # Store block layout metadata for corridor road generation
+        if assets:
+            self._block_layout_metadata = {
+                "anchor": (anchor_row, anchor_col),
+                "block_centers": block_centers,
+                "row_corridors": row_corridors,
+                "global_asset_positions": global_asset_positions,
+                "rows": actual_rows,
+                "columns": actual_cols,
+                "spacing_row_m": layout_config.spacing_row_m,
+                "spacing_col_m": layout_config.spacing_col_m,
+            }
+            logger.info(
+                f"Block layout placed {len(assets)} assets "
+                f"({actual_rows}x{actual_cols} blocks)"
+            )
+        return assets if assets else None
+
+    def _find_nearest_buildable_cell(
+        self,
+        asset_type: str,
+        target_row: int,
+        target_col: int,
+        buildable_mask: Optional[np.ndarray],
+        used_mask: np.ndarray,
+        slope_array: np.ndarray,
+        max_radius_cells: int = 60,
+    ) -> Optional[tuple[int, int]]:
+        """Find the best buildable cell near the target position.
+        
+        Balances proximity, slope, and suitability to find optimal placement.
+        """
+        if buildable_mask is None:
+            return None
+        
+        height, width = buildable_mask.shape
+        target_row = int(np.clip(target_row, 0, height - 1))
+        target_col = int(np.clip(target_col, 0, width - 1))
+        
+        # Get suitability array for this asset type
+        suitability = self._suitability_scores.get(asset_type)
+        
+        best_cell: Optional[tuple[int, int]] = None
+        best_score = float("inf")
+        
+        for radius in range(1, max_radius_cells + 1):
+            row_min = max(0, target_row - radius)
+            row_max = min(height - 1, target_row + radius)
+            col_min = max(0, target_col - radius)
+            col_max = min(width - 1, target_col + radius)
+            
+            for r in range(row_min, row_max + 1):
+                for c in range(col_min, col_max + 1):
+                    if not buildable_mask[r, c]:
+                        continue
+                    if used_mask[r, c]:
+                        continue
+                    
+                    slope = slope_array[r, c]
+                    if slope > self.SLOPE_LIMITS.get(asset_type, 15.0):
+                        continue
+                    
+                    distance = abs(r - target_row) + abs(c - target_col)
+                    
+                    # Score: lower is better
+                    # - Distance penalty (want to stay close to target)
+                    # - Slope penalty (prefer flat)
+                    # - Suitability bonus (prefer high suitability)
+                    suit_score = suitability[r, c] if suitability is not None else 0.5
+                    score = (
+                        distance * 0.5  # Reduced distance weight
+                        + slope * 2.0   # Increased slope penalty
+                        - suit_score * 30  # Suitability bonus (higher = better = lower score)
+                    )
+                    
+                    if score < best_score:
+                        best_score = score
+                        best_cell = (r, c)
+            
+            # Don't return immediately - search the full radius for best quality
+            # Only stop if we've found something good enough
+            if best_cell is not None and radius >= 3:
+                return best_cell
+        
+        return best_cell
+
+    def _create_asset_from_cell(
+        self,
+        asset_type: str,
+        cell: tuple[int, int],
+        dem_array: np.ndarray,
+        slope_array: np.ndarray,
+        transform: Affine,
+        capacity_per_asset: float,
+        is_generator: bool = True,
+    ) -> PlacedAsset:
+        """Instantiate a PlacedAsset using raster cell metadata.
+        
+        Args:
+            is_generator: If True, this asset generates power and its capacity_kw
+                         counts toward the site's total generation capacity.
+                         If False, it's storage/infrastructure and gets 0 capacity_kw.
+        """
+        row, col = cell
+        x, y = xy(transform, row, col)
+        elevation = float(dem_array[row, col])
+        slope = float(slope_array[row, col])
+        aspect = -1.0
+        if self._aspect_array is not None:
+            aspect = float(self._aspect_array[row, col])
+        suitability = 1.0
+        if asset_type in self._suitability_scores:
+            suitability = float(self._suitability_scores[asset_type][row, col])
+        
+        config = self.ASSET_CONFIGS[asset_type]
+        min_cap, max_cap = config["capacity_range"]
+        
+        if is_generator and max_cap > 0:
+            # Generating asset: scale capacity based on target, clamped to profile's range
+            variation = random.uniform(0.8, 1.2)
+            target_cap = capacity_per_asset * variation
+            final_capacity = max(min_cap, min(target_cap, max_cap))
+        else:
+            # Non-generating assets (battery, control center, cooling, substation)
+            # These don't contribute to generation capacity
+            # Battery's MW is discharge rate, not generation
+            final_capacity = 0.0
+        
+        rotation = self._compute_optimal_rotation(asset_type, aspect)
+        
+        self._block_asset_counter += 1
+        asset = PlacedAsset(
+            asset_type=asset_type,
+            name=f"{asset_type.replace('_', ' ').title()} {self._block_asset_counter}",
+            position=Point(x, y),
+            capacity_kw=round(final_capacity, 1),
+            elevation_m=round(elevation, 1),
+            slope_deg=round(slope, 1),
+            aspect_deg=round(aspect, 1),
+            suitability_score=round(suitability, 3),
+            footprint_length_m=config["footprint"][0],
+            footprint_width_m=config["footprint"][1],
+            rotation_deg=rotation,
+            grid_row=row,
+            grid_col=col,
+        )
+        logger.info(f"Block asset placed: {asset_type} at slope {slope:.1f}°")
+        return asset
     
     def _poisson_disk_sample(
         self,
@@ -821,7 +1327,8 @@ class TerrainAwareLayoutGenerator:
         """
         height, width = slope_array.shape
         min_spacing = self.strategy_config.get("min_spacing_m", self.MIN_SPACING_M)
-        min_spacing_cells = int(min_spacing / cell_size_m)
+        # Ensure min_spacing_cells is at least 1 to avoid division by zero
+        min_spacing_cells = max(1, int(min_spacing / cell_size_m))
         
         # Create exclusion mask from placed assets (cell-based for speed)
         exclusion_mask = np.zeros_like(buildable_mask)
@@ -1147,6 +1654,21 @@ class TerrainAwareLayoutGenerator:
             except Exception as e:
                 logger.warning(f"Failed to generate spine road: {e}")
         
+        # Check if block layout was used - use corridor-based roads if so
+        if self._block_layout_metadata:
+            corridor_roads = self._generate_block_corridor_roads(
+                assets=assets,
+                hub_asset=hub_asset,
+                cost_surface=cost_surface,
+                slope_array=slope_array,
+                transform=transform,
+                cell_size_m=cell_size_m,
+                budget_ceiling=budget_ceiling,
+            )
+            roads.extend(corridor_roads)
+            logger.info(f"Generated {len(roads)} road segments (topology: block-corridor)")
+            return roads
+        
         # Check if we should use MST-based routing
         use_mst = self.strategy_config.get("use_mst_roads", False)
         
@@ -1207,6 +1729,188 @@ class TerrainAwareLayoutGenerator:
             if road:
                 roads.append(road)
         
+        return roads
+    
+    def _generate_block_corridor_roads(
+        self,
+        assets: list[PlacedAsset],
+        hub_asset: PlacedAsset,
+        cost_surface: np.ndarray,
+        slope_array: np.ndarray,
+        transform: Affine,
+        cell_size_m: float,
+        budget_ceiling: float = 50000.0,
+    ) -> list[PlacedRoad]:
+        """
+        Generate roads using block corridor topology for structured layouts.
+        
+        Creates a grid-like road network:
+        1. Main spine from entry point to center of block grid
+        2. Row corridors connecting blocks in each row (east-west)
+        3. Short spur roads from corridors to individual assets
+        """
+        roads = []
+        meta = self._block_layout_metadata
+        if not meta:
+            return roads
+        
+        anchor_row, anchor_col = meta["anchor"]
+        row_corridors = meta["row_corridors"]
+        
+        # 1. Main spine: Entry -> Anchor (center of block grid)
+        if self._entry_point:
+            try:
+                entry_row, entry_col = rowcol(transform, self._entry_point.x, self._entry_point.y)
+                height, width = cost_surface.shape
+                
+                if 0 <= entry_row < height and 0 <= entry_col < width:
+                    spine_path, spine_cost = self._find_path_astar(
+                        start=(entry_row, entry_col),
+                        end=(anchor_row, anchor_col),
+                        cost_surface=cost_surface,
+                        budget_ceiling=budget_ceiling,
+                    )
+                    
+                    if spine_path:
+                        spine_road = self._path_to_road(
+                            path=spine_path,
+                            cost=spine_cost,
+                            name="Main Corridor",
+                            road_class="spine",
+                            transform=transform,
+                            cell_size_m=cell_size_m,
+                            slope_array=slope_array,
+                        )
+                        roads.append(spine_road)
+                        logger.info(f"Block corridor: Main spine {spine_road.length_m:.1f}m")
+            except Exception as e:
+                logger.warning(f"Block corridor: Failed to create main spine: {e}")
+        
+        # 2. Row corridors: Connect blocks within each row (east-west)
+        for row_idx, row_blocks in enumerate(row_corridors):
+            if len(row_blocks) < 2:
+                continue
+            
+            # Sort blocks by column (east-west)
+            sorted_blocks = sorted(row_blocks, key=lambda b: b[1])
+            
+            # Connect adjacent blocks in row
+            for i in range(len(sorted_blocks) - 1):
+                start_cell = sorted_blocks[i]
+                end_cell = sorted_blocks[i + 1]
+                
+                try:
+                    corridor_path, corridor_cost = self._find_path_astar(
+                        start=start_cell,
+                        end=end_cell,
+                        cost_surface=cost_surface,
+                        budget_ceiling=budget_ceiling,
+                    )
+                    
+                    if corridor_path:
+                        corridor_road = self._path_to_road(
+                            path=corridor_path,
+                            cost=corridor_cost,
+                            name=f"Row {row_idx + 1} Corridor {i + 1}",
+                            road_class="corridor",
+                            transform=transform,
+                            cell_size_m=cell_size_m,
+                            slope_array=slope_array,
+                        )
+                        roads.append(corridor_road)
+                except Exception as e:
+                    logger.warning(f"Block corridor: Failed row {row_idx} segment {i}: {e}")
+        
+        # 3. Column corridors: Connect rows vertically (north-south)
+        num_cols = meta.get("columns", 1)
+        for col_idx in range(num_cols):
+            # Gather block centers in this column
+            col_blocks = []
+            for row_idx, row_blocks in enumerate(row_corridors):
+                if col_idx < len(row_blocks):
+                    col_blocks.append(row_blocks[col_idx])
+            
+            if len(col_blocks) < 2:
+                continue
+            
+            # Sort by row (north-south)
+            sorted_col = sorted(col_blocks, key=lambda b: b[0])
+            
+            for i in range(len(sorted_col) - 1):
+                start_cell = sorted_col[i]
+                end_cell = sorted_col[i + 1]
+                
+                try:
+                    col_path, col_cost = self._find_path_astar(
+                        start=start_cell,
+                        end=end_cell,
+                        cost_surface=cost_surface,
+                        budget_ceiling=budget_ceiling,
+                    )
+                    
+                    if col_path:
+                        col_road = self._path_to_road(
+                            path=col_path,
+                            cost=col_cost,
+                            name=f"Column {col_idx + 1} Connector {i + 1}",
+                            road_class="corridor",
+                            transform=transform,
+                            cell_size_m=cell_size_m,
+                            slope_array=slope_array,
+                        )
+                        roads.append(col_road)
+                except Exception as e:
+                    logger.warning(f"Block corridor: Failed column {col_idx} segment {i}: {e}")
+        
+        # 4. Spur roads: Connect individual assets to nearest corridor node
+        # Build set of corridor nodes (block centers)
+        corridor_nodes = set(meta["block_centers"])
+        
+        for asset in assets:
+            asset_cell = (asset.grid_row, asset.grid_col)
+            
+            # Skip if asset is already on a corridor node
+            if asset_cell in corridor_nodes:
+                continue
+            
+            # Find nearest corridor node
+            min_dist = float('inf')
+            nearest_node = None
+            for node in corridor_nodes:
+                dist = abs(asset_cell[0] - node[0]) + abs(asset_cell[1] - node[1])
+                if dist < min_dist:
+                    min_dist = dist
+                    nearest_node = node
+            
+            if nearest_node is None or min_dist < 2:  # Skip very close assets
+                continue
+            
+            try:
+                spur_path, spur_cost = self._find_path_astar(
+                    start=nearest_node,
+                    end=asset_cell,
+                    cost_surface=cost_surface,
+                    budget_ceiling=budget_ceiling / 10,  # Lower budget for short spurs
+                )
+                
+                if spur_path:
+                    spur_road = self._path_to_road(
+                        path=spur_path,
+                        cost=spur_cost,
+                        name=f"Spur to {asset.name}",
+                        road_class="spur",
+                        transform=transform,
+                        cell_size_m=cell_size_m,
+                        slope_array=slope_array,
+                    )
+                    roads.append(spur_road)
+            except Exception as e:
+                logger.debug(f"Block corridor: Failed spur to {asset.name}: {e}")
+        
+        logger.info(
+            f"Block corridor roads: {len(roads)} segments "
+            f"(spine + {len(row_corridors)} row corridors + {num_cols} col connectors + spurs)"
+        )
         return roads
     
     def _generate_mst_roads(

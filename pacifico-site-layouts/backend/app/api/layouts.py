@@ -8,7 +8,7 @@ Phase 3 (GAP): Added asset manipulation endpoints.
 """
 import json
 import logging
-from typing import Any
+from typing import Any, Optional
 from uuid import UUID
 
 import numpy as np
@@ -31,6 +31,7 @@ from app.models.site import Site
 from app.models.user import User
 from app.schemas.layout import (
     AssetResponse,
+    BlockLayoutInfo,
     GenerateLayoutRequest,
     LayoutDetailResponse,
     LayoutEnqueueResponse,
@@ -80,6 +81,28 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/layouts", tags=["Layouts"])
 
 
+def _to_float(value: Any) -> float | None:
+    """Convert numpy scalars (or None) to native Python floats."""
+    if value is None:
+        return None
+    if isinstance(value, (np.floating, np.integer)):
+        return value.item()
+    return float(value)
+
+
+def _to_native(value: Any) -> Any:
+    """Recursively convert numpy scalars/arrays to native Python types."""
+    if isinstance(value, dict):
+        return {k: _to_native(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_to_native(v) for v in value]
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, (np.floating, np.integer)):
+        return value.item()
+    return value
+
+
 # =============================================================================
 # D-05: Layout Strategies Endpoint
 # =============================================================================
@@ -94,6 +117,28 @@ router = APIRouter(prefix="/api/layouts", tags=["Layouts"])
 async def get_layout_strategies() -> LayoutStrategiesResponse:
     """Get available layout strategies for variant generation."""
     return LayoutStrategiesResponse(strategies=STRATEGY_INFO_LIST)
+
+
+# =============================================================================
+# Generation Profiles Endpoint
+# =============================================================================
+
+from app.services.generation_profiles import get_profile_info
+from app.schemas.layout import ProfilesResponse, ProfileInfo
+
+
+@router.get(
+    "/profiles",
+    response_model=ProfilesResponse,
+    summary="Get available generation profiles",
+    description="Returns available asset mix profiles (solar, gas+bess, wind, hybrid).",
+)
+async def get_generation_profiles() -> ProfilesResponse:
+    """Get available generation profiles for layout generation."""
+    profiles_data = get_profile_info()
+    return ProfilesResponse(
+        profiles=[ProfileInfo(**p) for p in profiles_data]
+    )
 
 
 @router.post(
@@ -196,6 +241,7 @@ async def generate_layout(
             dem_resolution_m=request.dem_resolution_m,
             num_assets=num_assets,
             db=db,
+            generation_profile=request.generation_profile.value if request.generation_profile else None,
         )
     else:
         result = await _generate_dummy_layout(
@@ -298,6 +344,7 @@ async def generate_layout_variants(
                 num_assets=num_assets,
                 strategy=strategy,
                 db=db,
+                generation_profile=request.generation_profile.value if request.generation_profile else None,
             )
             variants.append(variant_result["variant"])
             metrics.append(variant_result["metrics"])
@@ -331,6 +378,7 @@ async def _generate_variant(
     num_assets: int,
     strategy: LayoutStrategy,
     db: AsyncSession,
+    generation_profile: Optional[str] = None,
 ) -> dict:
     """
     Generate a single variant with a specific strategy (D-05).
@@ -421,6 +469,7 @@ async def _generate_variant(
     generator = TerrainAwareLayoutGenerator(
         target_capacity_kw=target_capacity_kw,
         strategy=generator_strategy,
+        generation_profile=generation_profile,
     )
     
     placed_assets, placed_roads, cut_fill = generator.generate(
@@ -720,6 +769,7 @@ async def _generate_terrain_aware_layout(
     dem_resolution_m: int,
     num_assets: int,
     db: AsyncSession,
+    generation_profile: Optional[str] = None,
 ) -> LayoutGenerateResponse:
     """Generate layout using terrain-aware placement (Phase B, enhanced Phase E)."""
     
@@ -807,8 +857,11 @@ async def _generate_terrain_aware_layout(
             logger.info(f"Found {len(exclusion_zones)} exclusion zones for site {site.id}")
         
         # Step 4: Generate terrain-aware layout with enhanced metrics
-        logger.info(f"Generating terrain-aware layout for site {site.id}")
-        generator = TerrainAwareLayoutGenerator(target_capacity_kw=target_capacity_kw)
+        logger.info(f"Generating terrain-aware layout for site {site.id} with profile: {generation_profile or 'default'}")
+        generator = TerrainAwareLayoutGenerator(
+            target_capacity_kw=target_capacity_kw,
+            generation_profile=generation_profile,
+        )
         
         placed_assets, placed_roads, cut_fill = generator.generate(
             boundary=boundary,
@@ -826,8 +879,8 @@ async def _generate_terrain_aware_layout(
         
         # Update layout with terrain flag and cut/fill
         layout.terrain_processed = True
-        layout.cut_volume_m3 = cut_fill.cut_volume_m3
-        layout.fill_volume_m3 = cut_fill.fill_volume_m3
+        layout.cut_volume_m3 = _to_float(cut_fill.cut_volume_m3)
+        layout.fill_volume_m3 = _to_float(cut_fill.fill_volume_m3)
         layout.status = LayoutStatus.COMPLETED.value
         
         # D-02: Build per-asset cut/fill lookup from CutFillResult
@@ -869,18 +922,18 @@ async def _generate_terrain_aware_layout(
                 id=asset.id,
                 asset_type=asset.asset_type,
                 name=asset.name,
-                capacity_kw=asset.capacity_kw,
-                elevation_m=asset.elevation_m,
-                slope_deg=asset.slope_deg,
-                position=mapping(placed.position),
-                footprint_length_m=placed.footprint_length_m,
-                footprint_width_m=placed.footprint_width_m,
-                cut_m3=asset_cutfill.get("cut_m3"),
-                fill_m3=asset_cutfill.get("fill_m3"),
+                capacity_kw=_to_float(asset.capacity_kw),
+                elevation_m=_to_float(asset.elevation_m),
+                slope_deg=_to_float(asset.slope_deg),
+                position=_to_native(mapping(placed.position)),
+                footprint_length_m=_to_float(placed.footprint_length_m),
+                footprint_width_m=_to_float(placed.footprint_width_m),
+                cut_m3=_to_float(asset_cutfill.get("cut_m3")),
+                fill_m3=_to_float(asset_cutfill.get("fill_m3")),
                 # Phase E: Enhanced terrain metrics
-                aspect_deg=placed.aspect_deg if placed.aspect_deg >= 0 else None,
-                suitability_score=placed.suitability_score,
-                rotation_deg=placed.rotation_deg,
+                aspect_deg=_to_float(placed.aspect_deg) if placed.aspect_deg >= 0 else None,
+                suitability_score=_to_float(placed.suitability_score),
+                rotation_deg=_to_float(placed.rotation_deg),
             ))
         
         # Create Road records with grade data
@@ -911,17 +964,17 @@ async def _generate_terrain_aware_layout(
             road_responses.append(RoadResponse(
                 id=road.id,
                 name=road.name,
-                length_m=road.length_m,
-                max_grade_pct=road.max_grade_pct,
-                geometry=mapping(placed.geometry),
+                length_m=_to_float(road.length_m),
+                max_grade_pct=_to_float(road.max_grade_pct),
+                geometry=_to_native(mapping(placed.geometry)),
                 road_class=placed.road_class,
-                max_cumulative_cost=placed.max_cumulative_cost,
-                stationing_json={"data": placed.stationing} if placed.stationing else None,
+                max_cumulative_cost=_to_float(placed.max_cumulative_cost),
+                stationing_json={"data": _to_native(placed.stationing)} if placed.stationing else None,
                 kpi_flags={"flags": placed.kpi_flags} if placed.kpi_flags else None,
             ))
         
         # Update layout with totals
-        layout.total_capacity_kw = round(total_capacity, 1)
+        layout.total_capacity_kw = _to_float(round(total_capacity, 1))
         
         await db.commit()
         
@@ -929,11 +982,11 @@ async def _generate_terrain_aware_layout(
         await db.refresh(layout)
         
         # Generate GeoJSON
-        geojson = TerrainAwareLayoutGenerator.to_geojson_feature_collection(
+        geojson = _to_native(TerrainAwareLayoutGenerator.to_geojson_feature_collection(
             placed_assets,
             placed_roads,
             cut_fill,
-        )
+        ))
         
         logger.info(
             f"Generated terrain-aware layout {layout.id} for site {site.id}: "
@@ -942,14 +995,26 @@ async def _generate_terrain_aware_layout(
             f"fill={cut_fill.fill_volume_m3:.0f}m³"
         )
         
+        # Extract block layout info if available
+        block_layout_info = None
+        if hasattr(generator, '_block_layout_metadata') and generator._block_layout_metadata:
+            meta = generator._block_layout_metadata
+            profile_name = generator._profile_config.name if generator._profile_config else "Custom"
+            block_layout_info = BlockLayoutInfo(
+                rows=meta.get("rows", 0),
+                columns=meta.get("columns", 0),
+                total_blocks=meta.get("rows", 0) * meta.get("columns", 0),
+                profile_name=profile_name,
+            )
+        
         return LayoutGenerateResponse(
             layout=LayoutResponse(
                 id=layout.id,
                 site_id=layout.site_id,
                 status=layout.status,
-                total_capacity_kw=layout.total_capacity_kw,
-                cut_volume_m3=layout.cut_volume_m3,
-                fill_volume_m3=layout.fill_volume_m3,
+                total_capacity_kw=_to_float(layout.total_capacity_kw),
+                cut_volume_m3=_to_float(layout.cut_volume_m3),
+                fill_volume_m3=_to_float(layout.fill_volume_m3),
                 error_message=layout.error_message,
                 created_at=layout.created_at,
                 updated_at=layout.updated_at,
@@ -957,6 +1022,7 @@ async def _generate_terrain_aware_layout(
             assets=asset_responses,
             roads=road_responses,
             geojson=geojson,
+            block_layout_info=block_layout_info,
         )
         
     except Exception as e:
@@ -1953,14 +2019,18 @@ def random_asset_count(target_capacity_kw: float) -> int:
     """
     Determine number of assets based on target capacity.
     
-    Roughly scales between 5-15 assets based on capacity.
+    Uses an average asset size (~250 kW) and bounds the result to keep the
+    generator stable even for multi‑GW targets.
     """
     import random
     
-    base = 5
-    if target_capacity_kw > 500:
-        base += int((target_capacity_kw - 500) / 500)
+    AVG_ASSET_CAPACITY_KW = 250.0
+    MIN_ASSETS = 5
+    MAX_ASSETS = 200  # Prevent runaway counts that would stall pathfinding
     
-    # Add some randomness
-    return min(15, max(5, base + random.randint(-1, 2)))
+    target_assets = target_capacity_kw / AVG_ASSET_CAPACITY_KW
+    target_assets = max(MIN_ASSETS, min(MAX_ASSETS, target_assets))
+    
+    jitter = random.uniform(0.9, 1.1)
+    return int(max(MIN_ASSETS, min(MAX_ASSETS, round(target_assets * jitter))))
 

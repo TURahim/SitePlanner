@@ -107,7 +107,7 @@ export function SignupPage() {
       <div className="auth-container">
         <div className="auth-header">
           <h1>Create an account</h1>
-          <p>Get started with Pacifico Site Layouts</p>
+          <p>Get started with Microgrid Layout AI</p>
         </div>
 
         <form onSubmit={handleRegister} className="auth-form">

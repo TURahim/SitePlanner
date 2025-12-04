@@ -507,6 +507,15 @@ class TerrainAnalysisService:
                 slope_weight=0.80,
                 roughness_weight=0.15,  # Extra penalty for rough terrain
             ),
+            "wind_turbine": SuitabilityConfig(
+                max_slope_deg=20.0,  # Phase 5: More tolerant to slope than other assets
+                optimal_slope_deg=8.0,
+                preferred_aspect=180.0,  # North/south orientation less critical
+                aspect_weight=0.05,  # Lower aspect weight
+                slope_weight=0.60,
+                roughness_weight=0.10,
+                curvature_weight=0.25,  # Higher curvature weight - prefers convex terrain for wind exposure
+            ),
         }
         return configs.get(asset_type, SuitabilityConfig())
     

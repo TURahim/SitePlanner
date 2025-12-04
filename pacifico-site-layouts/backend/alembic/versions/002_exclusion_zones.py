@@ -67,3 +67,8 @@ def downgrade() -> None:
     op.drop_index('idx_exclusion_zones_geometry', table_name='exclusion_zones')
     op.drop_table('exclusion_zones')
 
+
+
+
+
+

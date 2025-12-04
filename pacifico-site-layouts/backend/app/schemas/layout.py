@@ -2,6 +2,7 @@
 Pydantic schemas for Layout API endpoints.
 
 D-05: Added variant generation support with multiple optimization strategies.
+Generation Profiles: Added support for different asset mixes (solar, gas+bess, wind, hybrid).
 """
 from datetime import datetime
 from enum import Enum
@@ -11,6 +12,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 from app.config import get_settings
+from app.services.generation_profiles import GenerationProfile, get_profile_info
 
 # Get terrain default from config (environment-specific)
 _settings = get_settings()
@@ -68,8 +70,8 @@ class GenerateLayoutRequest(BaseModel):
     target_capacity_kw: float = Field(
         default=1000.0,
         ge=100,
-        le=100000,
-        description="Target total capacity in kW",
+        le=5_000_000,
+        description="Target total capacity in kW (supports up to 5 GW microgrids)",
     )
     use_terrain: bool = Field(
         default=_settings.use_terrain,  # From config: USE_TERRAIN env var
@@ -81,6 +83,11 @@ class GenerateLayoutRequest(BaseModel):
         le=30,
         description="DEM resolution in meters (10 or 30). Only used if use_terrain=True.",
     )
+    # Generation Profile: Asset mix selection
+    generation_profile: GenerationProfile = Field(
+        default=GenerationProfile.SOLAR_FARM,
+        description="Generation profile determining asset mix (solar_farm, gas_bess, wind_hybrid, hybrid)",
+    )
     # D-05: Variant generation options
     generate_variants: bool = Field(
         default=False,
@@ -90,6 +97,33 @@ class GenerateLayoutRequest(BaseModel):
         default=None,
         description="D-05: Strategies to use (defaults to all 4 if generate_variants=True)",
     )
+
+
+# =============================================================================
+# Generation Profiles
+# =============================================================================
+
+
+class ProfileInfo(BaseModel):
+    """Information about a generation profile."""
+    profile: str
+    name: str
+    description: str
+    asset_types: list[str]
+    has_block_layout: bool = False
+
+
+class BlockLayoutInfo(BaseModel):
+    """Information about structured block layout used in generation."""
+    rows: int = Field(..., description="Number of block rows")
+    columns: int = Field(..., description="Number of block columns")
+    total_blocks: int = Field(..., description="Total number of blocks placed")
+    profile_name: str = Field(..., description="Name of the generation profile used")
+
+
+class ProfilesResponse(BaseModel):
+    """Response for available generation profiles."""
+    profiles: list[ProfileInfo]
 
 
 class AssetResponse(BaseModel):
@@ -177,6 +211,10 @@ class LayoutGenerateResponse(BaseModel):
     geojson: dict[str, Any] = Field(
         ...,
         description="Complete layout as GeoJSON FeatureCollection",
+    )
+    block_layout_info: Optional[BlockLayoutInfo] = Field(
+        None,
+        description="Information about structured block layout, if used",
     )
 
 
@@ -441,4 +479,104 @@ class RecomputeEarthworkResponse(BaseModel):
     net_earthwork_m3: float
     per_asset: list[dict] = Field(default_factory=list)
     message: str
+
+
+# =============================================================================
+# Phase 5: Compliance Rules & Advanced Assets
+# =============================================================================
+
+
+class ComplianceRuleRequest(BaseModel):
+    """Request to add/update a compliance rule."""
+    
+    rule_id: str = Field(..., description="Unique rule identifier")
+    rule_type: str = Field(..., description="Type of rule (e.g., max_slope, min_spacing)")
+    asset_type: Optional[str] = Field(None, description="Asset type this rule applies to (None = all)")
+    value: float = Field(..., description="Rule limit value")
+    unit: str = Field(..., description="Unit of measurement (e.g., 'degrees', 'meters')")
+    description: str = Field(..., description="Human-readable rule description")
+    enabled: bool = Field(default=True, description="Whether rule is enabled")
+
+
+class ComplianceRuleResponse(BaseModel):
+    """Response for a compliance rule."""
+    
+    rule_id: str
+    rule_type: str
+    jurisdiction: str
+    asset_type: Optional[str]
+    value: float
+    unit: str
+    description: str
+    enabled: bool
+
+
+class ComplianceViolation(BaseModel):
+    """A single compliance violation."""
+    
+    rule_id: str
+    rule_type: str
+    asset_type: Optional[str]
+    message: str
+    severity: str  # "error" or "warning"
+    actual_value: float
+    limit_value: float
+
+
+class ComplianceCheckRequest(BaseModel):
+    """Request to check compliance for a layout."""
+    
+    jurisdiction: str = Field(default="default", description="Jurisdiction code")
+
+
+class ComplianceCheckResponse(BaseModel):
+    """Response from compliance check."""
+    
+    layout_id: UUID
+    is_compliant: bool
+    violations_count: int
+    warnings_count: int
+    violations: list[ComplianceViolation] = Field(default_factory=list)
+    warnings: list[ComplianceViolation] = Field(default_factory=list)
+    checked_rules_count: int
+
+
+class GetComplianceRulesRequest(BaseModel):
+    """Request to get compliance rules for a jurisdiction."""
+    
+    jurisdiction: str = Field(default="default", description="Jurisdiction code")
+    enabled_only: bool = Field(default=True, description="Return only enabled rules")
+
+
+class GetComplianceRulesResponse(BaseModel):
+    """Response with compliance rules for a jurisdiction."""
+    
+    jurisdiction: str
+    total_rules: int
+    rules: list[ComplianceRuleResponse]
+
+
+class GISPublishRequest(BaseModel):
+    """Request to publish layout to GIS system."""
+    
+    provider_type: str = Field(
+        default="logging",
+        description="GIS provider type (logging, mock, arcgis_online, etc.)",
+    )
+    include_metadata: bool = Field(
+        default=True,
+        description="Include layout metadata in GIS publish",
+    )
+
+
+class GISPublishResponse(BaseModel):
+    """Response from GIS publish operation."""
+    
+    success: bool
+    provider_type: str
+    message: str
+    external_id: Optional[str] = None
+    url: Optional[str] = None
+    features_published: int
+    errors: list[str] = Field(default_factory=list)
 

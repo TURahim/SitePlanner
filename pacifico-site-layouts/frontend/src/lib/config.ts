@@ -2,8 +2,8 @@
  * Application configuration from environment variables
  */
 export const config = {
-  // API
-  apiUrl: import.meta.env.VITE_API_URL || 'http://localhost:8000',
+  // API - Default to AWS ALB when no env var is set
+  apiUrl: import.meta.env.VITE_API_URL || 'http://pacifico-layouts-dev-alb-980890644.us-east-1.elb.amazonaws.com',
   
   // Cognito
   cognito: {

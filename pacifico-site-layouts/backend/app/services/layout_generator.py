@@ -65,6 +65,11 @@ class DummyLayoutGenerator:
             "weight": 0.05,
             "footprint": (20, 15),
         },
+        "wind_turbine": {
+            "capacity_range": (1000, 5000),  # Phase 5: kW per turbine
+            "weight": 0.0,  # Not selected by default
+            "footprint": (60, 60),
+        },
     }
     
     def __init__(self, target_capacity_kw: float = 1000.0):

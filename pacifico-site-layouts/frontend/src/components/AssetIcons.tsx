@@ -224,10 +224,15 @@ export function getAssetIcon(assetType: string): React.FC<IconProps> {
     case 'battery':
       return BatteryIcon;
     case 'generator':
+    case 'gas_turbine':
       return GeneratorIcon;
     case 'substation':
     case 'transformer':
+    case 'control_center':
       return SubstationIcon;
+    case 'wind_turbine':
+    case 'cooling_system':
+      return BatteryIcon; // Reuse battery icon for now
     default:
       return SolarArrayIcon; // Default to solar
   }
@@ -247,6 +252,10 @@ export function getAssetIconDataUrl(
     battery: '#3b82f6',
     generator: '#ef4444',
     substation: '#8b5cf6',
+    gas_turbine: '#dc2626',
+    wind_turbine: '#10b981',
+    control_center: '#22c55e',
+    cooling_system: '#0ea5e9',
   };
   
   const color = colors[assetType.toLowerCase()] || '#6b7280';
@@ -258,9 +267,21 @@ export function getAssetIconDataUrl(
     battery: `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 32 32"><rect x="2" y="8" width="28" height="18" rx="2" fill="${fillColor}" stroke="${color}" stroke-width="2"/><rect x="5" y="4" width="4" height="4" rx="1" fill="${color}"/><rect x="23" y="4" width="4" height="4" rx="1" fill="${color}"/><rect x="6" y="12" width="5" height="10" rx="1" fill="${color}" opacity="0.6"/><rect x="13" y="12" width="6" height="10" rx="1" fill="${color}" opacity="0.6"/><rect x="21" y="12" width="5" height="10" rx="1" fill="${color}" opacity="0.6"/></svg>`,
     generator: `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 32 32"><rect x="4" y="10" width="24" height="16" rx="2" fill="${fillColor}" stroke="${color}" stroke-width="2"/><rect x="6" y="13" width="12" height="10" rx="1" fill="${color}" opacity="0.4"/><rect x="20" y="13" width="6" height="10" rx="1" fill="${color}" opacity="0.3"/><circle cx="23" cy="15.5" r="1.5" fill="#22c55e"/><rect x="2" y="26" width="28" height="3" rx="1" fill="${color}" opacity="0.6"/></svg>`,
     substation: `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 32 32"><rect x="8" y="12" width="16" height="14" rx="2" fill="${fillColor}" stroke="${color}" stroke-width="2"/><rect x="10" y="6" width="3" height="6" rx="1" fill="${color}"/><rect x="19" y="6" width="3" height="6" rx="1" fill="${color}"/><line x1="11.5" y1="2" x2="11.5" y2="6" stroke="${color}" stroke-width="1.5"/><line x1="20.5" y1="2" x2="20.5" y2="6" stroke="${color}" stroke-width="1.5"/><circle cx="11.5" cy="2" r="1.5" fill="${color}"/><circle cx="20.5" cy="2" r="1.5" fill="${color}"/><rect x="2" y="26" width="28" height="4" rx="1" fill="${color}" opacity="0.4"/></svg>`,
+    // Gas turbine - similar to generator but with flame symbol
+    gas_turbine: `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 32 32"><rect x="4" y="10" width="24" height="16" rx="2" fill="${fillColor}" stroke="${color}" stroke-width="2"/><rect x="6" y="13" width="12" height="10" rx="1" fill="${color}" opacity="0.4"/><rect x="20" y="13" width="6" height="10" rx="1" fill="${color}" opacity="0.3"/><path d="M16 4 Q14 8 16 10 Q18 8 16 4" fill="#f97316"/><rect x="2" y="26" width="28" height="3" rx="1" fill="${color}" opacity="0.6"/></svg>`,
+    // Wind turbine - three blades
+    wind_turbine: `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 32 32"><rect x="14" y="16" width="4" height="14" fill="${color}" opacity="0.6"/><circle cx="16" cy="12" r="3" fill="${fillColor}" stroke="${color}" stroke-width="2"/><path d="M16 12 L16 2" stroke="${color}" stroke-width="2"/><path d="M16 12 L24 18" stroke="${color}" stroke-width="2"/><path d="M16 12 L8 18" stroke="${color}" stroke-width="2"/></svg>`,
+    // Control center - building with antenna
+    control_center: `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 32 32"><rect x="6" y="14" width="20" height="14" rx="2" fill="${fillColor}" stroke="${color}" stroke-width="2"/><rect x="14" y="4" width="4" height="10" fill="${color}"/><circle cx="16" cy="4" r="2" fill="${color}"/><rect x="9" y="18" width="4" height="6" fill="${color}" opacity="0.4"/><rect x="19" y="18" width="4" height="6" fill="${color}" opacity="0.4"/></svg>`,
+    // Cooling system - tower with water drops
+    cooling_system: `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 32 32"><path d="M8 28 L8 12 Q8 8 16 8 Q24 8 24 12 L24 28 Z" fill="${fillColor}" stroke="${color}" stroke-width="2"/><ellipse cx="16" cy="6" rx="4" ry="2" fill="${color}" opacity="0.3"/><circle cx="12" cy="18" r="1.5" fill="${color}" opacity="0.5"/><circle cx="16" cy="20" r="1.5" fill="${color}" opacity="0.5"/><circle cx="20" cy="18" r="1.5" fill="${color}" opacity="0.5"/></svg>`,
   };
   
   const icon = icons[assetType.toLowerCase()] || icons.solar;
   return `data:image/svg+xml;base64,${btoa(icon)}`;
 }
+
+
+
+
 

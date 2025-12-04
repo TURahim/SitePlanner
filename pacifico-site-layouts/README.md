@@ -8,10 +8,13 @@ Pacifico Site Layouts streamlines early-stage real estate due diligence by autom
 
 - **KML/KMZ Import** — Upload site boundaries from Google Earth or GIS tools
 - **Terrain Analysis** — Fetch DEMs and compute slope/aspect from USGS 3DEP or SRTM
-- **Smart Asset Placement** — Heuristic placement of solar arrays, batteries, generators, and substations based on terrain suitability
-- **Road Network Generation** — Auto-route access roads connecting all assets
+- **Generation Profiles** — Choose from Solar Farm, Gas + Battery Storage, Wind Hybrid, or Hybrid Mix profiles
+- **Block Layout System** — Structured placement for gas turbine campuses with realistic Siemens SGT-800 class turbines (35-50 MW)
+- **Smart Asset Placement** — Suitability-aware placement optimizing for flat terrain, buildable area, and centrality
+- **GW-Scale Support** — Generate layouts up to 17 GW with automatic grid scaling (up to 400 turbine blocks)
+- **Road Network Generation** — Auto-route access roads with block-aware corridor planning
 - **Cut/Fill Estimation** — Calculate earthwork volumes for pads and roads
-- **Multi-format Export** — Download layouts as GeoJSON, KMZ, or PDF reports
+- **Multi-format Export** — Download layouts as GeoJSON, KMZ, PDF reports, or CSV
 
 ## Tech Stack
 
@@ -251,6 +254,15 @@ The application follows a three-phase MVP approach:
    - ✅ D-04: Export functionality completion (terrain in PDF, CSV export, filenames) — COMPLETE
    - ✅ D-05: Layout variants & comparison (4 strategies, comparison table, variant tabs) — COMPLETE
 
+5. **Phase F** — Generation Profiles + GW-Scale Support ✅ **COMPLETE** (Dec 2025)
+   - ✅ F-01: Generation profiles system (solar_farm, gas_bess, wind_hybrid, hybrid)
+   - ✅ F-02: Block layout for gas turbine campuses (structured grid placement)
+   - ✅ F-03: Suitability-aware anchor selection (footprint-based, centrality preference)
+   - ✅ F-04: Capacity attribution fix (only generators count, not batteries)
+   - ✅ F-05: GW-scale support (up to 20×20 = 400 blocks, ~17 GW)
+   - ✅ F-06: Block-aware corridor road generation
+   - ✅ F-07: Siemens SGT-800 turbine specs (35-50 MW per unit)
+
 See `MVP_Task_List.md` in the project root for detailed task breakdown and progress tracking.
 See `PHASE_D_PROGRESS.md` in the project root for current Phase D implementation details.
 
@@ -284,6 +296,20 @@ See `PHASE_D_PROGRESS.md` in the project root for current Phase D implementation
   - Overlays persist across browser refreshes and client-side navigation
   - Variant-aware caching supports multiple configurations per site
   - Instant toggle after initial generation
+
+**Generation Profiles (Dec 2025):**
+- **Solar Farm** — Traditional solar arrays with battery storage (utility-scale solar)
+- **Gas + Battery Storage** — Natural gas turbines (Siemens SGT-800 class, 35-50 MW) with BESS for off-grid data centers
+- **Wind Hybrid** — Wind turbines with solar and storage for sites with good wind resources
+- **Hybrid Mix** — Balanced mix of solar, wind, gas, and storage for maximum flexibility
+
+**Block Layout System (Dec 2025):**
+- Structured block-based placement for gas turbine campuses
+- Each block contains: gas turbine, battery storage, cooling system
+- Global infrastructure: control center, substation
+- Suitability-aware anchor selection considering total footprint
+- Scalable up to 20×20 grid (400 blocks, ~17 GW capacity)
+- Block-aware corridor road generation with spine/row/column roads
 
 **Enable Async Mode:**
 ```hcl
@@ -348,6 +374,7 @@ backend_env_vars = {
 
 *Phase B (New):*
 - **Layout Generation**: Enhanced POST /api/layouts/generate with terrain-aware placement (default)
+- **Generation Profiles**: GET /api/layouts/profiles (list available profiles: solar_farm, gas_bess, wind_hybrid, hybrid)
 - **Exports API**: 
   - GET /api/layouts/{id}/export/geojson (GeoJSON FeatureCollection)
   - GET /api/layouts/{id}/export/kmz (Google Earth KMZ)
@@ -364,7 +391,14 @@ backend_env_vars = {
 - **DEM Service**: Fetches elevation data from USGS 3DEP with automatic caching
 - **Slope Service**: Computes slope rasters from DEM using NumPy
 - **Terrain-Aware Layout Generator**: Intelligent asset placement respecting slope constraints
-- **Export Service**: Generates GeoJSON, KMZ, and PDF exports
+- **Generation Profiles Service**: Configurable profiles for different project types
+- **Export Service**: Generates GeoJSON, KMZ, PDF, and CSV exports
+
+**GW-Scale Gas Turbine Support:**
+- Designed for projects like Pacifico Energy's GW Ranch (5GW off-grid data center)
+- Siemens SGT-800 class turbines (35-50 MW each)
+- Structured block layout with turbine + battery + cooling per block
+- Automatic scaling: 1 GW ≈ 24 blocks, 5 GW ≈ 120 blocks
 
 **Phase C Implementation (✅ Complete):**
 1. ✅ **C-01** - Set up SQS queue for layout generation jobs (completed)

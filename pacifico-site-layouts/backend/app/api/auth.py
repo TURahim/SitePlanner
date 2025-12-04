@@ -199,8 +199,9 @@ async def get_current_user(
     
     This dependency:
     1. Extracts the JWT from the Authorization header
-    2. Verifies the token with Cognito's public keys
-    3. Looks up or creates the User in our database
+    2. Checks if it's a demo token (for demo mode)
+    3. Verifies the token with Cognito's public keys (for real auth)
+    4. Looks up or creates the User in our database
     
     Usage:
         @app.get("/api/me")
@@ -214,8 +215,30 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    # Decode and verify the token
-    token_payload = await decode_token(credentials.credentials)
+    token = credentials.credentials
+    
+    # Check if it's a demo token
+    if await validate_demo_token(token):
+        # Get or create demo user
+        result = await db.execute(
+            select(User).where(User.cognito_sub == DEMO_USER_SUB)
+        )
+        user = result.scalar_one_or_none()
+        
+        if not user:
+            user = User(
+                cognito_sub=DEMO_USER_SUB,
+                email=DEMO_USER_EMAIL,
+                name=DEMO_USER_NAME,
+            )
+            db.add(user)
+            await db.flush()
+            logger.info(f"Created demo user: {user.email}")
+        
+        return user
+    
+    # Standard Cognito JWT validation
+    token_payload = await decode_token(token)
     
     # Look up user by Cognito sub
     result = await db.execute(
@@ -259,4 +282,60 @@ async def get_optional_user(
         return await get_current_user(credentials, db)
     except HTTPException:
         return None
+
+
+# =============================================================================
+# Demo Authentication
+# =============================================================================
+
+DEMO_USER_SUB = "demo-user-12345"
+DEMO_USER_EMAIL = "demo@microgrid-layout.ai"
+DEMO_USER_NAME = "Demo User"
+# Simple demo token - in production, use proper JWT
+DEMO_TOKEN = "demo-token-microgrid-layout-ai"
+
+
+async def validate_demo_token(token: str) -> bool:
+    """Check if token is a valid demo token."""
+    return token == DEMO_TOKEN
+
+
+async def get_current_user_or_demo(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    """
+    Get current user - supports both Cognito JWT and demo tokens.
+    """
+    if not credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    token = credentials.credentials
+    
+    # Check if it's a demo token
+    if await validate_demo_token(token):
+        # Get or create demo user
+        result = await db.execute(
+            select(User).where(User.cognito_sub == DEMO_USER_SUB)
+        )
+        user = result.scalar_one_or_none()
+        
+        if not user:
+            user = User(
+                cognito_sub=DEMO_USER_SUB,
+                email=DEMO_USER_EMAIL,
+                name=DEMO_USER_NAME,
+            )
+            db.add(user)
+            await db.flush()
+            logger.info(f"Created demo user: {user.email}")
+        
+        return user
+    
+    # Otherwise, use standard Cognito JWT validation
+    return await get_current_user(credentials, db)
 

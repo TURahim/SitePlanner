@@ -2,10 +2,12 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies for PostGIS/GDAL
+# Install system dependencies for PostGIS/GDAL/Rasterio
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev \
     curl \
+    libexpat1 \
+    libgdal-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies

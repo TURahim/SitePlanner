@@ -18,12 +18,25 @@ if TYPE_CHECKING:
 
 class AssetType(str, Enum):
     """Types of infrastructure assets."""
+    # Solar/Renewables
     SOLAR_ARRAY = "solar_array"
+    WIND_TURBINE = "wind_turbine"
+    
+    # Storage
     BATTERY = "battery"
+    
+    # Thermal Generation
     GENERATOR = "generator"
+    GAS_TURBINE = "gas_turbine"
+    
+    # Grid Infrastructure
     SUBSTATION = "substation"
     TRANSFORMER = "transformer"
     INVERTER = "inverter"
+    
+    # Auxiliary (Gas + BESS profile)
+    CONTROL_CENTER = "control_center"
+    COOLING_SYSTEM = "cooling_system"
 
 
 class Asset(Base, UUIDMixin, TimestampMixin):

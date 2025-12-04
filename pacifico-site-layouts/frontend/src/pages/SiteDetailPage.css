@@ -147,6 +147,33 @@
   box-shadow: 0 0 0 3px var(--accent-light);
 }
 
+.sidebar-section .form-group select {
+  width: 100%;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-base);
+  color: var(--text-secondary);
+  font-size: 0.9375rem;
+  box-sizing: border-box;
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.sidebar-section .form-group select:focus {
+  outline: none;
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 3px var(--accent-light);
+}
+
+.sidebar-section .form-group .profile-description {
+  display: block;
+  margin-top: 0.5rem;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
 /* ==========================================================================
    Generate Button
    ========================================================================== */
@@ -432,6 +459,59 @@
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.05em;
+}
+
+/* ==========================================================================
+   Block Layout Section (Gas + BESS / Structured Layouts)
+   ========================================================================== */
+
+.block-layout-section {
+  margin-top: 1.25rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.block-layout-section h3 {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--navy-primary);
+  margin: 0 0 0.75rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.block-layout-section h3::before {
+  content: '▦';
+  font-size: 1rem;
+  color: var(--accent-teal);
+}
+
+.block-layout-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  background: var(--surface-base);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--accent-teal);
+  padding: 0.75rem;
+}
+
+.block-info-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.8125rem;
+}
+
+.block-info-label {
+  color: var(--text-secondary);
+}
+
+.block-info-value {
+  font-weight: 600;
+  color: var(--navy-primary);
 }
 
 /* ==========================================================================
@@ -965,6 +1045,54 @@
 
 .terrain-layers-section {
   background: var(--surface-base);
+}
+
+/* Base Layer Selector */
+.base-layer-selector {
+  margin-bottom: 1.5rem;
+}
+
+.base-layer-selector h3 {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 0 0 0.75rem;
+}
+
+.layer-toggles {
+  display: flex;
+  background: var(--surface-base);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: 0.25rem;
+  gap: 0.25rem;
+}
+
+.layer-btn {
+  flex: 1;
+  padding: 0.5rem;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.layer-btn:hover {
+  color: var(--text-primary);
+  background: rgba(0, 0, 0, 0.03);
+}
+
+.layer-btn.active {
+  background: var(--surface-elevated);
+  color: var(--navy-primary);
+  box-shadow: var(--shadow-sm);
+  font-weight: 600;
 }
 
 .terrain-layers {

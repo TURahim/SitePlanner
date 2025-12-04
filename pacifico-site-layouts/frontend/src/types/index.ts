@@ -63,7 +63,7 @@ export type LayoutStatus = 'queued' | 'processing' | 'completed' | 'failed';
 
 export interface Asset {
   id: string;
-  asset_type: 'solar' | 'battery' | 'generator' | 'substation' | 'solar_array';
+  asset_type: 'solar' | 'battery' | 'generator' | 'substation' | 'solar_array' | 'wind_turbine' | 'gas_turbine' | 'control_center' | 'cooling_system';
   name?: string;
   capacity_kw?: number;
   position: Point;
@@ -116,11 +116,22 @@ export interface LayoutDetail extends Layout {
   roads: Road[];
 }
 
+/**
+ * Information about structured block layout used in generation
+ */
+export interface BlockLayoutInfo {
+  rows: number;
+  columns: number;
+  total_blocks: number;
+  profile_name: string;
+}
+
 export interface LayoutGenerateResponse {
   layout: Layout;
   assets: Asset[];
   roads: Road[];
   geojson: FeatureCollection;
+  block_layout_info?: BlockLayoutInfo;
 }
 
 export interface LayoutListItem {
@@ -136,11 +147,39 @@ export interface LayoutListResponse {
   total: number;
 }
 
+/**
+ * Generation profiles for different asset mixes
+ */
+export type GenerationProfile = 
+  | 'solar_farm'
+  | 'gas_bess'
+  | 'wind_hybrid'
+  | 'hybrid';
+
+/**
+ * Profile information from API
+ */
+export interface ProfileInfo {
+  profile: GenerationProfile;
+  name: string;
+  description: string;
+  asset_types: string[];
+  has_block_layout?: boolean;
+}
+
+/**
+ * Response for available generation profiles
+ */
+export interface ProfilesResponse {
+  profiles: ProfileInfo[];
+}
+
 export interface GenerateLayoutRequest {
   site_id: string;
   target_capacity_kw?: number;
   use_terrain?: boolean;
   dem_resolution_m?: number;
+  generation_profile?: GenerationProfile;
 }
 
 // =============================================================================
@@ -524,6 +563,81 @@ export interface ExclusionZoneListResponse {
  */
 export interface ExclusionZoneTypesResponse {
   types: ExclusionZoneTypeInfo[];
+}
+
+// =============================================================================
+// Phase 5: Compliance Rules & GIS Integration Types
+// =============================================================================
+
+/**
+ * Compliance rule for a jurisdiction
+ */
+export interface ComplianceRule {
+  rule_id: string;
+  rule_type: string;
+  jurisdiction: string;
+  asset_type?: string;
+  value: number;
+  unit: string;
+  description: string;
+  enabled: boolean;
+}
+
+/**
+ * Single compliance violation
+ */
+export interface ComplianceViolation {
+  rule_id: string;
+  rule_type: string;
+  asset_type?: string;
+  message: string;
+  severity: 'error' | 'warning';
+  actual_value: number;
+  limit_value: number;
+}
+
+/**
+ * Compliance check result for a layout
+ */
+export interface ComplianceCheckResponse {
+  layout_id: string;
+  is_compliant: boolean;
+  violations_count: number;
+  warnings_count: number;
+  violations: ComplianceViolation[];
+  warnings: ComplianceViolation[];
+  checked_rules_count: number;
+}
+
+/**
+ * GIS publish result
+ */
+export interface GISPublishResponse {
+  success: boolean;
+  provider_type: string;
+  message: string;
+  external_id?: string;
+  url?: string;
+  features_published: number;
+  errors: string[];
+}
+
+/**
+ * Available jurisdictions for compliance
+ */
+export interface AvailableJurisdictions {
+  jurisdictions: string[];
+  default: string;
+  total: number;
+}
+
+/**
+ * Available GIS providers
+ */
+export interface AvailableGISProviders {
+  providers: string[];
+  default: string;
+  description: Record<string, string>;
 }
 
 // =============================================================================

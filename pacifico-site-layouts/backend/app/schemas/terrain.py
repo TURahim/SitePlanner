@@ -162,3 +162,8 @@ class SlopeHeatmapResponse(BaseModel):
         description="Legend mapping slope classes to colors"
     )
 
+
+
+
+
+

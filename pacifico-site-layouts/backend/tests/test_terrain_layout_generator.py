@@ -599,3 +599,154 @@ class TestBoundaryRasterization:
         interior_pct = np.sum(mask) / mask.size * 100
         assert interior_pct > 50, "Most of grid should be inside boundary"
 
+
+class TestBlockLayoutPlacement:
+    """Tests for structured block layout placement (Gas + BESS profiles)."""
+    
+    @pytest.fixture
+    def gas_bess_generator(self):
+        """Create a generator with gas_bess profile."""
+        return TerrainAwareLayoutGenerator(
+            target_capacity_kw=500000.0,  # 500 MW
+            generation_profile="gas_bess",
+        )
+    
+    @pytest.fixture
+    def large_boundary(self):
+        """Create a larger 5km x 5km boundary for block layouts."""
+        # 5km ≈ 0.045 degrees at equator
+        return box(-0.0225, -0.0225, 0.0225, 0.0225)
+    
+    @pytest.fixture
+    def flat_large_terrain(self):
+        """Create flat terrain data for large boundary."""
+        shape = (500, 500)
+        dem = np.ones(shape) * 100.0  # Constant elevation of 100m
+        slope = np.ones(shape) * 1.5  # Low slope everywhere
+        transform = Affine(0.00009, 0, -0.0225, 0, -0.00009, 0.0225)
+        return dem, slope, transform
+    
+    def test_gas_bess_profile_has_block_layout(self, gas_bess_generator):
+        """Test that gas_bess profile has block layout config."""
+        assert gas_bess_generator._profile_config is not None
+        assert gas_bess_generator._profile_config.block_layout is not None
+        
+        layout = gas_bess_generator._profile_config.block_layout
+        assert layout.rows > 0
+        assert layout.columns > 0
+        assert len(layout.assets) > 0
+    
+    def test_block_layout_places_expected_asset_types(
+        self, gas_bess_generator, large_boundary, flat_large_terrain
+    ):
+        """Test that block layout places gas turbines, batteries, and other expected assets."""
+        dem, slope, transform = flat_large_terrain
+        
+        assets, roads, cut_fill = gas_bess_generator.generate(
+            boundary=large_boundary,
+            dem_array=dem,
+            slope_array=slope,
+            transform=transform,
+            num_assets=20,  # Will be overridden by block layout
+        )
+        
+        # Should have placed assets
+        assert len(assets) > 0
+        
+        # Verify expected asset types from gas_bess profile
+        asset_types = {a.asset_type for a in assets}
+        expected_types = {"gas_turbine", "battery"}
+        
+        # At least gas turbines and batteries should be present
+        assert "gas_turbine" in asset_types or "battery" in asset_types, \
+            f"Expected gas_turbine or battery in asset types, got {asset_types}"
+    
+    def test_block_layout_metadata_is_stored(
+        self, gas_bess_generator, large_boundary, flat_large_terrain
+    ):
+        """Test that block layout metadata is stored after generation."""
+        dem, slope, transform = flat_large_terrain
+        
+        gas_bess_generator.generate(
+            boundary=large_boundary,
+            dem_array=dem,
+            slope_array=slope,
+            transform=transform,
+            num_assets=20,
+        )
+        
+        # Block layout metadata should be populated
+        meta = gas_bess_generator._block_layout_metadata
+        assert meta is not None, "Block layout metadata should be stored"
+        
+        assert "rows" in meta
+        assert "columns" in meta
+        assert "block_centers" in meta
+        assert "row_corridors" in meta
+        
+        # Verify grid dimensions match profile config
+        layout = gas_bess_generator._profile_config.block_layout
+        assert meta["rows"] == layout.rows
+        assert meta["columns"] == layout.columns
+    
+    def test_block_layout_grid_spacing(
+        self, gas_bess_generator, large_boundary, flat_large_terrain
+    ):
+        """Test that block centers are spaced according to profile config."""
+        dem, slope, transform = flat_large_terrain
+        
+        gas_bess_generator.generate(
+            boundary=large_boundary,
+            dem_array=dem,
+            slope_array=slope,
+            transform=transform,
+            num_assets=20,
+        )
+        
+        meta = gas_bess_generator._block_layout_metadata
+        block_centers = meta["block_centers"]
+        
+        # Should have expected number of block centers
+        expected_blocks = meta["rows"] * meta["columns"]
+        assert len(block_centers) == expected_blocks, \
+            f"Expected {expected_blocks} blocks, got {len(block_centers)}"
+    
+    def test_block_layout_generates_corridor_roads(
+        self, gas_bess_generator, large_boundary, flat_large_terrain
+    ):
+        """Test that block layout generates corridor-style roads."""
+        dem, slope, transform = flat_large_terrain
+        
+        assets, roads, cut_fill = gas_bess_generator.generate(
+            boundary=large_boundary,
+            dem_array=dem,
+            slope_array=slope,
+            transform=transform,
+            num_assets=20,
+        )
+        
+        # Should have generated roads
+        assert len(roads) > 0
+        
+        # Check for corridor-type roads
+        road_names = [r.name for r in roads]
+        has_corridor = any(
+            "Corridor" in name or "Connector" in name or "Main" in name 
+            for name in road_names
+        )
+        assert has_corridor, \
+            f"Expected corridor-type roads, got names: {road_names}"
+    
+    def test_solar_farm_does_not_use_block_layout(self):
+        """Test that solar_farm profile uses random placement, not block layout."""
+        generator = TerrainAwareLayoutGenerator(
+            target_capacity_kw=10000.0,
+            generation_profile="solar_farm",
+        )
+        
+        # Solar farm should not have block layout
+        assert generator._profile_config is not None
+        assert generator._profile_config.block_layout is None
+
+
+

@@ -35,3 +35,8 @@ def downgrade() -> None:
     op.drop_index("ix_terrain_cache_variant_key", table_name="terrain_cache")
     op.drop_column("terrain_cache", "variant_key")
 
+
+
+
+
+

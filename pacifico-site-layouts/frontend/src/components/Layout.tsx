@@ -25,7 +25,7 @@ export function Layout() {
                 <path d="M9 3v14" />
                 <path d="M15 7v14" />
               </svg>
-              <span className="logo-text">Pacifico</span>
+              <span className="logo-text">Microgrid Layout AI</span>
             </div>
           </Link>
           

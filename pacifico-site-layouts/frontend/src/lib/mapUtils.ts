@@ -36,6 +36,27 @@ export const ASSET_COLORS: Record<string, { fill: string; stroke: string; text: 
     stroke: '#8b5cf6', // violet-500
     text: '#5b21b6', // violet-800
   },
+  // New asset types for gas_bess and hybrid profiles
+  gas_turbine: {
+    fill: '#fef2f2', // red-50
+    stroke: '#dc2626', // red-600
+    text: '#7f1d1d', // red-900
+  },
+  wind_turbine: {
+    fill: '#ecfdf5', // emerald-50
+    stroke: '#10b981', // emerald-500
+    text: '#064e3b', // emerald-900
+  },
+  control_center: {
+    fill: '#f0fdf4', // green-50
+    stroke: '#22c55e', // green-500
+    text: '#14532d', // green-900
+  },
+  cooling_system: {
+    fill: '#f0f9ff', // sky-50
+    stroke: '#0ea5e9', // sky-500
+    text: '#0c4a6e', // sky-900
+  },
 };
 
 // Road grade thresholds for color coding
@@ -147,4 +168,8 @@ export function formatFootprint(lengthM: number | undefined, widthM: number | un
   if (!lengthM || !widthM) return '—';
   return `${lengthM.toFixed(0)}m × ${widthM.toFixed(0)}m`;
 }
+
+
+
+
 

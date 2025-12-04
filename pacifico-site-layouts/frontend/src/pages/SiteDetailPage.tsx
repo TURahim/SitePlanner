@@ -28,6 +28,8 @@ import {
   // D-05-06: Preferred layout
   getPreferredLayout,
   setPreferredLayout,
+  // Generation profiles
+  getGenerationProfiles,
 } from '../lib/api';
 import { useLayoutPolling, formatElapsedTime } from '../hooks/useLayoutPolling';
 import {
@@ -61,6 +63,9 @@ import type {
   // D-05: Layout variant types
   LayoutVariant,
   VariantComparison,
+  // Generation profiles
+  GenerationProfile,
+  ProfileInfo,
 } from '../types';
 import { isAsyncLayoutResponse } from '../types';
 import 'leaflet/dist/leaflet.css';
@@ -89,6 +94,11 @@ function formatAssetType(type: string): string {
     substation: 'Substation',
     transformer: 'Transformer',
     inverter: 'Inverter',
+    // New asset types for gas_bess and hybrid profiles
+    gas_turbine: 'Gas Turbine',
+    wind_turbine: 'Wind Turbine',
+    control_center: 'Control Center',
+    cooling_system: 'Cooling System',
   };
   return mapping[type.toLowerCase()] || type.charAt(0).toUpperCase() + type.slice(1);
 }
@@ -181,7 +191,7 @@ export function SiteDetailPage() {
   const [layouts, setLayouts] = useState<LayoutListItem[]>([]);
   const [currentLayout, setCurrentLayout] = useState<LayoutGenerateResponse | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
-  const [targetCapacity, setTargetCapacity] = useState(1000);
+  const [targetCapacityMW, setTargetCapacityMW] = useState(1); // Store in MW, convert to kW for API
   const [generationError, setGenerationError] = useState<string | null>(null);
   
   // Phase C: Async polling state
@@ -209,6 +219,7 @@ export function SiteDetailPage() {
   const [exportingFormat, setExportingFormat] = useState<ExportFormat | null>(null);
   
   // D-01: Terrain layer state
+  const [baseLayer, setBaseLayer] = useState<'street' | 'satellite'>('street');
   const [terrainLayers, setTerrainLayers] = useState<Set<TerrainLayerType>>(new Set());
   const [terrainLoading, setTerrainLoading] = useState<Set<TerrainLayerType>>(new Set());
   const [terrainSummary, setTerrainSummary] = useState<TerrainSummaryResponse | null>(null);
@@ -233,6 +244,10 @@ export function SiteDetailPage() {
   
   // D-05-06: Preferred layout state
   const [preferredLayoutId, setPreferredLayoutId] = useState<string | null>(null);
+  
+  // Generation profiles state
+  const [profiles, setProfiles] = useState<ProfileInfo[]>([]);
+  const [selectedProfile, setSelectedProfile] = useState<GenerationProfile>('gas_bess');
   
   // When polled layout data arrives, convert it to display format
   useEffect(() => {
@@ -270,6 +285,19 @@ export function SiteDetailPage() {
       fetchPreferredLayout(id);
     }
   }, [id]);
+  
+  // Fetch generation profiles on mount
+  useEffect(() => {
+    async function loadProfiles() {
+      try {
+        const response = await getGenerationProfiles();
+        setProfiles(response.profiles);
+      } catch (err) {
+        console.error('Failed to fetch generation profiles:', err);
+      }
+    }
+    loadProfiles();
+  }, []);
   
   // D-05-06: Fetch preferred layout
   async function fetchPreferredLayout(siteId: string) {
@@ -315,7 +343,8 @@ export function SiteDetailPage() {
       
       const response = await generateLayout({
         site_id: id,
-        target_capacity_kw: targetCapacity,
+        target_capacity_kw: targetCapacityMW * 1000, // Convert MW to kW for API
+        generation_profile: selectedProfile,
       });
       
       // Check if async response (Phase C)
@@ -518,7 +547,7 @@ export function SiteDetailPage() {
       
       const response = await generateLayoutVariants({
         site_id: id,
-        target_capacity_kw: targetCapacity,
+        target_capacity_kw: targetCapacityMW * 1000, // Convert MW to kW for API
       });
       
       setLayoutVariants(response.variants);
@@ -680,15 +709,37 @@ export function SiteDetailPage() {
           <p>Create an optimized asset layout for this site.</p>
           
           <div className="form-group">
-            <label htmlFor="capacity">Target Capacity (kW)</label>
+            <label htmlFor="profile">Generation Profile</label>
+            <select
+              id="profile"
+              value={selectedProfile}
+              onChange={(e) => setSelectedProfile(e.target.value as GenerationProfile)}
+              disabled={isGenerating || isPolling}
+              className="profile-select"
+            >
+              {profiles.map((p) => (
+                <option key={p.profile} value={p.profile}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+            {profiles.find(p => p.profile === selectedProfile) && (
+              <small className="profile-description">
+                {profiles.find(p => p.profile === selectedProfile)?.description}
+              </small>
+            )}
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="capacity">Target Capacity (MW)</label>
             <input
               id="capacity"
               type="number"
-              value={targetCapacity}
-              onChange={(e) => setTargetCapacity(Number(e.target.value))}
-              min={100}
-              max={100000}
-              step={100}
+              value={targetCapacityMW}
+              onChange={(e) => setTargetCapacityMW(Number(e.target.value))}
+              min={0.1}
+              max={5000}
+              step={1}
               disabled={isGenerating || isPolling}
             />
           </div>
@@ -825,6 +876,26 @@ export function SiteDetailPage() {
         {/* D-01: Terrain Layers Section */}
         <div className="sidebar-section terrain-layers-section">
           <h2>Map Layers</h2>
+          
+          {/* Base Layer Toggle */}
+          <div className="base-layer-selector">
+            <h3>Base Map</h3>
+            <div className="layer-toggles">
+              <button
+                className={`layer-btn ${baseLayer === 'street' ? 'active' : ''}`}
+                onClick={() => setBaseLayer('street')}
+              >
+                Street
+              </button>
+              <button
+                className={`layer-btn ${baseLayer === 'satellite' ? 'active' : ''}`}
+                onClick={() => setBaseLayer('satellite')}
+              >
+                Satellite
+              </button>
+            </div>
+          </div>
+
           <p>Toggle terrain visualization layers on the map.</p>
           
           <div className="terrain-layers">
@@ -986,14 +1057,37 @@ export function SiteDetailPage() {
                 <span className="stat-label">Assets</span>
               </div>
               <div className="layout-stat">
-                <span className="stat-value">{currentLayout.layout.total_capacity_kw?.toFixed(0) || '—'}</span>
-                <span className="stat-label">kW Total</span>
+                <span className="stat-value">{currentLayout.layout.total_capacity_kw ? (currentLayout.layout.total_capacity_kw / 1000).toFixed(1) : '—'}</span>
+                <span className="stat-label">MW Total</span>
               </div>
               <div className="layout-stat">
                 <span className="stat-value">{currentLayout.roads.length}</span>
                 <span className="stat-label">Roads</span>
               </div>
             </div>
+            
+            {/* Block Layout Info */}
+            {currentLayout.block_layout_info && (
+              <div className="block-layout-section">
+                <h3>Block Layout</h3>
+                <div className="block-layout-info">
+                  <div className="block-info-item">
+                    <span className="block-info-label">Profile:</span>
+                    <span className="block-info-value">{currentLayout.block_layout_info.profile_name}</span>
+                  </div>
+                  <div className="block-info-item">
+                    <span className="block-info-label">Grid:</span>
+                    <span className="block-info-value">
+                      {currentLayout.block_layout_info.rows} × {currentLayout.block_layout_info.columns} blocks
+                    </span>
+                  </div>
+                  <div className="block-info-item">
+                    <span className="block-info-label">Total Blocks:</span>
+                    <span className="block-info-value">{currentLayout.block_layout_info.total_blocks}</span>
+                  </div>
+                </div>
+              </div>
+            )}
             
             {/* D-02: Cut/Fill Volume Display */}
             {(currentLayout.layout.cut_volume_m3 != null || currentLayout.layout.fill_volume_m3 != null) && (
@@ -1195,8 +1289,16 @@ export function SiteDetailPage() {
           ref={mapRef}
         >
           <TileLayer
-            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            attribution={
+              baseLayer === 'satellite'
+                ? 'Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community'
+                : '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+            }
+            url={
+              baseLayer === 'satellite'
+                ? 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
+                : 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'
+            }
           />
           
           {/* Fit map to boundary */}

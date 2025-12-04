@@ -1,12 +1,29 @@
 /**
  * Landing page - public home page with product info
  */
-import { Link } from 'react-router-dom';
+import { useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import './LandingPage.css';
 
 export function LandingPage() {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, demoLogin } = useAuth();
+  const navigate = useNavigate();
+  const [isDemoLoading, setIsDemoLoading] = useState(false);
+  const [demoError, setDemoError] = useState<string | null>(null);
+
+  const handleDemoLogin = async () => {
+    setIsDemoLoading(true);
+    setDemoError(null);
+    try {
+      await demoLogin();
+      navigate('/projects');
+    } catch (err) {
+      setDemoError(err instanceof Error ? err.message : 'Failed to start demo');
+    } finally {
+      setIsDemoLoading(false);
+    }
+  };
 
   return (
     <div className="landing-page">
@@ -31,6 +48,13 @@ export function LandingPage() {
               </Link>
             ) : (
               <>
+                <button
+                  onClick={handleDemoLogin}
+                  className="btn-hero-demo"
+                  disabled={isDemoLoading}
+                >
+                  {isDemoLoading ? 'Loading Demo...' : '🚀 Try Demo'}
+                </button>
                 <Link to="/signup" className="btn-hero-primary">
                   Start Free
                 </Link>
@@ -40,6 +64,9 @@ export function LandingPage() {
               </>
             )}
           </div>
+          {demoError && (
+            <p className="demo-error">{demoError}</p>
+          )}
         </div>
       </section>
 
@@ -84,7 +111,7 @@ export function LandingPage() {
       </section>
 
       <footer className="landing-footer">
-        <p>© 2025 Pacifico Energy Group</p>
+        <p>© 2025 Microgrid Layout AI</p>
       </footer>
     </div>
   );

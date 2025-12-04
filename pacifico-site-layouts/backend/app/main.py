@@ -242,14 +242,20 @@ async def root() -> dict[str, str]:
 # API Routes
 # =============================================================================
 
-from app.api.auth import get_current_user
+from app.api.auth import get_current_user, DEMO_USER_SUB, DEMO_USER_EMAIL, DEMO_USER_NAME, DEMO_TOKEN
 from app.api.layouts import router as layouts_router
 from app.api.sites import router as sites_router
 from app.api.exports import router as exports_router
 from app.api.terrain import router as terrain_router
 from app.api.exclusion_zones import router as exclusion_zones_router
+from app.api.compliance import router as compliance_router
 from app.models.user import User
+from app.models.site import Site
 from fastapi import Depends
+from pydantic import BaseModel
+from geoalchemy2.functions import ST_SetSRID, ST_GeomFromText, ST_Area
+from geoalchemy2 import Geography
+from sqlalchemy import select, cast
 
 # Include API routers
 app.include_router(sites_router)
@@ -257,6 +263,7 @@ app.include_router(layouts_router)
 app.include_router(exports_router)  # Phase B export endpoints
 app.include_router(terrain_router)  # Phase D terrain visualization endpoints
 app.include_router(exclusion_zones_router)  # Phase D-03 exclusion zones
+app.include_router(compliance_router)  # Phase 5 compliance and GIS endpoints
 
 
 @app.get("/api/me", tags=["Auth"])
@@ -271,6 +278,292 @@ async def get_me(user: User = Depends(get_current_user)) -> dict:
         "email": user.email,
         "name": user.name,
     }
+
+
+# =============================================================================
+# Demo Login Endpoint
+# =============================================================================
+
+
+class DemoLoginResponse(BaseModel):
+    """Response from demo login endpoint."""
+    token: str
+    user: dict
+    message: str
+
+
+# Demo site boundary - testsitereal.kml (Permian Basin 5GW site)
+DEMO_SITE_BOUNDARY_WKT = """POLYGON((
+    -102.577820 30.818940,
+    -102.565990 30.827310,
+    -102.552540 30.828880,
+    -102.544200 30.823600,
+    -102.535960 30.815100,
+    -102.532880 30.805830,
+    -102.540020 30.797400,
+    -102.551950 30.792840,
+    -102.564900 30.794220,
+    -102.574780 30.800500,
+    -102.579120 30.809910,
+    -102.577820 30.818940
+))"""
+
+DEMO_SITE_NAME = "5GW Permian Basin Site"
+
+
+@app.post("/api/auth/demo-login", tags=["Auth"], response_model=DemoLoginResponse)
+async def demo_login() -> DemoLoginResponse:
+    """
+    Login as a demo user with a pre-seeded test site.
+    
+    This endpoint creates or retrieves a demo user account and ensures
+    a demo site (Permian Basin 5GW) is available for testing.
+    
+    Returns a demo token that can be used for API authentication.
+    """
+    from app.database import async_session_maker
+    
+    async with async_session_maker() as db:
+        try:
+            # 1. Get or create demo user
+            result = await db.execute(
+                select(User).where(User.cognito_sub == DEMO_USER_SUB)
+            )
+            demo_user = result.scalar_one_or_none()
+            
+            if not demo_user:
+                demo_user = User(
+                    cognito_sub=DEMO_USER_SUB,
+                    email=DEMO_USER_EMAIL,
+                    name=DEMO_USER_NAME,
+                )
+                db.add(demo_user)
+                await db.flush()
+                logger.info(f"Created demo user: {demo_user.email}")
+            
+            # 2. Check if demo site exists
+            site_result = await db.execute(
+                select(Site).where(
+                    Site.owner_id == demo_user.id,
+                    Site.name == DEMO_SITE_NAME,
+                )
+            )
+            demo_site = site_result.scalar_one_or_none()
+            
+            if not demo_site:
+                # Create the demo site from testsitereal.kml boundary
+                # Clean up the WKT (remove newlines/extra spaces)
+                clean_wkt = " ".join(DEMO_SITE_BOUNDARY_WKT.split())
+                
+                demo_site = Site(
+                    name=DEMO_SITE_NAME,
+                    owner_id=demo_user.id,
+                    boundary=ST_SetSRID(ST_GeomFromText(clean_wkt), 4326),
+                )
+                db.add(demo_site)
+                await db.flush()
+                
+                # Calculate area in square meters
+                area_result = await db.execute(
+                    select(ST_Area(cast(Site.boundary, Geography))).where(Site.id == demo_site.id)
+                )
+                area_m2 = area_result.scalar() or 0.0
+                demo_site.area_m2 = area_m2
+                
+                logger.info(f"Created demo site: {demo_site.name} ({area_m2/1e6:.2f} km²)")
+            
+            await db.commit()
+            
+            return DemoLoginResponse(
+                token=DEMO_TOKEN,
+                user={
+                    "id": str(demo_user.id),
+                    "email": demo_user.email,
+                    "name": demo_user.name,
+                },
+                message="Demo login successful. A sample site has been pre-loaded.",
+            )
+            
+        except Exception as e:
+            logger.exception(f"Demo login failed: {e}")
+            await db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Demo login failed: {str(e)}",
+            )
+
+
+# =============================================================================
+# DEBUG ENDPOINT - REMOVE IN PRODUCTION
+# =============================================================================
+
+@app.post("/debug/test-layout-generation", tags=["Debug"])
+async def debug_test_layout_generation():
+    """
+    DEBUG ONLY: Test layout generation without authentication.
+    
+    This endpoint is for local debugging only and should be removed in production.
+    It creates a test site and generates a layout to verify the terrain pipeline.
+    """
+    import uuid
+    from shapely.geometry import Polygon
+    from shapely import wkt as shapely_wkt
+    from geoalchemy2.functions import ST_SetSRID, ST_GeomFromText
+    from sqlalchemy import select
+    
+    from app.database import async_session_maker
+    from app.models.site import Site
+    from app.models.user import User
+    from app.services.dem_service import get_dem_service
+    from app.services.slope_service import get_slope_service
+    from app.services.terrain_analysis_service import get_terrain_analysis_service
+    from app.services.terrain_layout_generator import TerrainAwareLayoutGenerator
+    
+    logger.info("=" * 60)
+    logger.info("DEBUG: Testing layout generation pipeline")
+    logger.info("=" * 60)
+    
+    # Create a small test boundary (~50 acres in West Texas)
+    # This is the same as sample-site.kml
+    test_boundary_wkt = "POLYGON((-101.8500 35.2000, -101.8450 35.2000, -101.8450 35.1950, -101.8500 35.1950, -101.8500 35.2000))"
+    test_boundary = shapely_wkt.loads(test_boundary_wkt)
+    
+    results = {
+        "steps": [],
+        "success": False,
+        "error": None,
+    }
+    
+    async with async_session_maker() as db:
+        try:
+            # Step 1: Create or get test user
+            logger.info("Step 1: Creating test user...")
+            test_user_result = await db.execute(
+                select(User).where(User.email == "debug@test.local")
+            )
+            test_user = test_user_result.scalar_one_or_none()
+            
+            if not test_user:
+                test_user = User(
+                    cognito_sub="debug-test-sub",
+                    email="debug@test.local",
+                    name="Debug Test User",
+                )
+                db.add(test_user)
+                await db.flush()
+            
+            results["steps"].append({"step": 1, "status": "ok", "message": f"Test user: {test_user.email}"})
+            
+            # Step 2: Create test site
+            logger.info("Step 2: Creating test site...")
+            test_site = Site(
+                name=f"Debug Test Site {uuid.uuid4().hex[:8]}",
+                owner_id=test_user.id,
+                boundary=ST_SetSRID(ST_GeomFromText(test_boundary_wkt), 4326),
+                area_m2=200000,  # ~50 acres
+            )
+            db.add(test_site)
+            await db.flush()
+            
+            results["steps"].append({"step": 2, "status": "ok", "message": f"Test site: {test_site.id}"})
+            
+            # Step 3: Fetch DEM
+            logger.info("Step 3: Fetching DEM from USGS 3DEP...")
+            dem_service = get_dem_service()
+            dem_s3_key = await dem_service.get_dem_for_site(
+                site_id=test_site.id,
+                boundary=test_boundary,
+                db=db,
+                resolution_m=30,  # Use 30m for faster testing
+            )
+            
+            if not dem_s3_key:
+                raise Exception("DEM fetch failed - check py3dep and network connectivity")
+            
+            results["steps"].append({"step": 3, "status": "ok", "message": f"DEM S3 key: {dem_s3_key}"})
+            
+            # Step 4: Compute slope
+            logger.info("Step 4: Computing slope...")
+            slope_service = get_slope_service()
+            slope_s3_key = await slope_service.get_slope_for_site(
+                site_id=test_site.id,
+                dem_s3_key=dem_s3_key,
+                db=db,
+            )
+            
+            if not slope_s3_key:
+                raise Exception("Slope computation failed")
+            
+            results["steps"].append({"step": 4, "status": "ok", "message": f"Slope S3 key: {slope_s3_key}"})
+            
+            # Step 5: Load raster data
+            logger.info("Step 5: Loading raster data...")
+            dem_array, dem_profile = await dem_service.get_dem_array(dem_s3_key)
+            slope_array, slope_profile = await slope_service.get_slope_array(slope_s3_key)
+            
+            results["steps"].append({
+                "step": 5, 
+                "status": "ok", 
+                "message": f"DEM shape: {dem_array.shape}, Slope range: {slope_array.min():.1f}° - {slope_array.max():.1f}°"
+            })
+            
+            # Step 6: Terrain analysis
+            logger.info("Step 6: Running terrain analysis...")
+            terrain_analysis = get_terrain_analysis_service()
+            transform = dem_profile["transform"]
+            crs = dem_profile.get("crs", "EPSG:4326")
+            
+            terrain_metrics = terrain_analysis.analyze_terrain(
+                dem_array=dem_array,
+                transform=transform,
+                crs=str(crs),
+                apply_smoothing=True,
+            )
+            
+            results["steps"].append({"step": 6, "status": "ok", "message": "Terrain analysis complete"})
+            
+            # Step 7: Generate layout
+            logger.info("Step 7: Generating layout...")
+            generator = TerrainAwareLayoutGenerator(target_capacity_kw=1000)
+            
+            placed_assets, placed_roads, cut_fill = generator.generate(
+                boundary=test_boundary,
+                dem_array=dem_array,
+                slope_array=slope_array,
+                transform=transform,
+                num_assets=5,
+            )
+            
+            results["steps"].append({
+                "step": 7, 
+                "status": "ok", 
+                "message": f"Generated {len(placed_assets)} assets, {len(placed_roads)} roads"
+            })
+            
+            # Step 8: Summary
+            total_capacity = sum(a.capacity_kw for a in placed_assets)
+            results["steps"].append({
+                "step": 8,
+                "status": "ok",
+                "message": f"Total capacity: {total_capacity:.1f} kW, Cut: {cut_fill.cut_volume_m3:.0f} m³, Fill: {cut_fill.fill_volume_m3:.0f} m³"
+            })
+            
+            results["success"] = True
+            
+            # Rollback the test data (we don't want to persist debug data)
+            await db.rollback()
+            
+            logger.info("=" * 60)
+            logger.info("DEBUG: Layout generation pipeline test PASSED")
+            logger.info("=" * 60)
+            
+        except Exception as e:
+            logger.exception(f"DEBUG: Layout generation failed: {e}")
+            results["error"] = str(e)
+            results["error_type"] = type(e).__name__
+            await db.rollback()
+    
+    return results
 
 
 # API endpoints implemented:

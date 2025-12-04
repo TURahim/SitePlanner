@@ -4,6 +4,7 @@
 import axios from 'axios';
 import { fetchAuthSession } from 'aws-amplify/auth';
 import { config } from './config';
+import type { User } from '../types';
 import type {
   Site,
   SiteListResponse,
@@ -32,6 +33,8 @@ import type {
   GenerateVariantsRequest,
   // D-05-06: Preferred layout types
   PreferredLayoutResponse,
+  // Generation profiles
+  ProfilesResponse,
 } from '../types';
 
 // =============================================================================
@@ -368,6 +371,14 @@ export async function getLayoutStrategies(): Promise<LayoutStrategiesResponse> {
 }
 
 /**
+ * Get available generation profiles (solar, gas+bess, wind, hybrid)
+ */
+export async function getGenerationProfiles(): Promise<ProfilesResponse> {
+  const response = await api.get<ProfilesResponse>('/api/layouts/profiles');
+  return response.data;
+}
+
+/**
  * Generate multiple layout variants for comparison
  */
 export async function generateLayoutVariants(
@@ -408,3 +419,83 @@ export async function setPreferredLayout(
   );
   return response.data;
 }
+
+// =============================================================================
+// Demo Login API
+// =============================================================================
+
+export interface DemoLoginResponse {
+  token: string;
+  user: User;
+  message: string;
+}
+
+// Store demo token for use in requests
+let demoToken: string | null = null;
+
+/**
+ * Set the demo token for API requests
+ */
+export function setDemoToken(token: string | null): void {
+  demoToken = token;
+  if (token) {
+    localStorage.setItem('demo_token', token);
+  } else {
+    localStorage.removeItem('demo_token');
+  }
+}
+
+/**
+ * Get the stored demo token
+ */
+export function getDemoToken(): string | null {
+  if (!demoToken) {
+    demoToken = localStorage.getItem('demo_token');
+  }
+  return demoToken;
+}
+
+/**
+ * Clear demo token (for logout)
+ */
+export function clearDemoToken(): void {
+  demoToken = null;
+  localStorage.removeItem('demo_token');
+}
+
+/**
+ * Login as a demo user with pre-seeded test site
+ */
+export async function demoLogin(): Promise<DemoLoginResponse> {
+  const response = await axios.post<DemoLoginResponse>(
+    `${config.apiUrl}/api/auth/demo-login`
+  );
+  
+  // Store the token
+  setDemoToken(response.data.token);
+  
+  return response.data;
+}
+
+// Update the request interceptor to also check for demo token
+api.interceptors.request.clear();
+api.interceptors.request.use(async (requestConfig) => {
+  // First check for demo token
+  const storedDemoToken = getDemoToken();
+  if (storedDemoToken) {
+    requestConfig.headers.Authorization = `Bearer ${storedDemoToken}`;
+    return requestConfig;
+  }
+  
+  // Otherwise try Cognito auth
+  try {
+    const session = await fetchAuthSession();
+    const token = session.tokens?.idToken?.toString();
+    if (token) {
+      requestConfig.headers.Authorization = `Bearer ${token}`;
+    }
+  } catch {
+    // Not authenticated - continue without token
+  }
+  return requestConfig;
+});
